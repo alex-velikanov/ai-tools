@@ -139,6 +139,8 @@ echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stu
 VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
+  check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
+  check "the shipped pages.json resolves to desktop, tablet and mobile for /" bash -c "cd '$VRSRC' && node -e \"import('./config.mjs').then(m=>{const t=m.resolveTargets(JSON.parse(require('fs').readFileSync('pages.json')));if(t.map(x=>x.viewport).join()!=='desktop,tablet,mobile')process.exit(1)})\""
   VRDEPS="$WORK/vr-deps"; mkdir -p "$VRDEPS"; cp "$VRSRC/package.json" "$VRDEPS/"
   if (cd "$VRDEPS" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund >"$WORK/npm.log" 2>&1); then
     pass "vr dependencies install (playwright, pixelmatch, pngjs)"
@@ -146,7 +148,7 @@ else
 
     vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
       local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
-      cp "$VRSRC"/{vr.sh,filter.mjs,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
       cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
       echo "$d"
     }

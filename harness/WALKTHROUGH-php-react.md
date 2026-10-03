@@ -85,7 +85,7 @@ Drop the flag to get just the files; the commands are printed so you can run the
 | `.semgrepignore` | skips `vendor/`, `node_modules/`, `dist/`, `build/` |
 | `backend/phpstan.neon.dist`, `backend/phpunit.xml.dist` | PHPStan level 6 over `src/`; PHPUnit bootstrapped with `vendor/autoload.php`, running `tests/` |
 | `e2e/` | Playwright **on the host**, against the containerised app: config, `seed.spec.ts`, `specs/`, and the planner / generator / healer agents in `e2e/.claude/` |
-| `vr/` | visual regression tool (host): `pages.json`, `rubric.md`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
+| `vr/` | visual regression tool (host): `pages.json`, `rubric.md`, `config.mjs`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
 | `.cursor/mcp.json` | `xdebug` (runs inside the `app` container via `docker compose exec -T`) and `playwright` MCP servers |
 | `evals/`, `.github/workflows/eval.yml` | eval harness for the review prompt; runs monthly and when `review-prompt.md` changes |
 | `.github/dependabot.yml` | composer (`/backend`), npm (`/frontend`), github-actions; 7-day cooldown |
@@ -317,7 +317,23 @@ the reviewer missed, add it as a new case.
 
 ## 8. Visual regression, before and after a deploy
 
-Edit `vr/pages.json` to your real URLs, e.g. `["/", "/cart", "/checkout"]`, then:
+Edit `vr/pages.json` to your real paths. Every page is shot at three viewports by default:
+desktop 1440×900, tablet 768×1024 and mobile 390×844 (tablet and mobile emulate a touch device).
+
+```json
+{
+  "viewports": {
+    "desktop": { "width": 1440, "height": 900 },
+    "tablet": { "width": 768, "height": 1024, "mobile": true },
+    "mobile": { "width": 390, "height": 844, "mobile": true }
+  },
+  "pages": ["/", "/cart", { "path": "/checkout", "viewports": ["mobile"] }]
+}
+```
+
+A plain list such as `["/", "/cart"]` still works and uses the default viewports. A page object
+can limit itself to some viewports. Screenshots are named `<viewport>__<page>__<tile>.png`, so each
+viewport has its own baseline. Then:
 
 ```bash
 vr/vr.sh --record https://staging.example.com   # before deploy: record the known-good build as the baseline
