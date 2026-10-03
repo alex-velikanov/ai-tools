@@ -50,19 +50,30 @@ no markdown fences. A file present in only one of the two folders means a \
 page or section was added or removed: report it." \
   --allowedTools Read ${VR_MODEL:+--model "$VR_MODEL"} > raw_report.txt
 
-# Model output isn't always fence-free despite instructions — extract the
-# JSON array defensively instead of trusting exact compliance.
+# Model output isn't always fence-free despite instructions — find the JSON array defensively instead of
+# trusting exact compliance. Prose may contain brackets ("[2 pages]"), so try each "[" until one decodes
+# to a list of objects.
 python3 -c "
 import json, re, sys
 
 text = open('raw_report.txt').read()
-match = re.search(r'\[.*\]', text, re.DOTALL)
-if not match:
+dec = json.JSONDecoder()
+report = None
+for m in re.finditer(r'\\[', text):
+    try:
+        obj, _ = dec.raw_decode(text, m.start())
+    except ValueError:
+        continue
+    if isinstance(obj, list) and all(isinstance(r, dict) for r in obj):
+        if obj or report is None:
+            report = obj
+        if obj:
+            break
+if report is None:
     print('No JSON array found in model output:', file=sys.stderr)
     print(text, file=sys.stderr)
     sys.exit(1)
 
-report = json.loads(match.group(0))
 json.dump(report, open('report.json', 'w'), indent=2)
 
 worst = max((r.get('severity', 0) for r in report), default=0)

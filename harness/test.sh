@@ -232,6 +232,8 @@ else
     check "an empty array from the model passes"             bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q '0 pages compared' '$WORK/vr.out'"
     check "JSON inside markdown fences is extracted"         bash -c "[ \"$(run_with "$(printf '```json\n%s\n```' "$(sev 2)")")\" = 0 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['file']=='home__0.png'\""
     check "JSON surrounded by prose is extracted"            bash -c "[ \"$(run_with "Here is the report: $(sev 3) Hope that helps.")\" = 1 ]"
+    check "brackets in the prose around the JSON do not break extraction" bash -c "[ \"$(run_with "Checked [2 pages]. Result: $(sev 3) See note [1].")\" = 1 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['severity']==3\""
+    check "brackets with no report inside fail cleanly, without a traceback" bash -c "[ \"$(run_with 'Checked [2 pages], see [1].')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && ! grep -q Traceback '$WORK/vr.out'"
     check "output with no JSON array fails and shows the text" bash -c "[ \"$(run_with 'I could not open the images.')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && grep -q 'could not open' '$WORK/vr.out'"
     check "a record with no severity counts as 0"            bash -c "[ \"$(run_with '[{"file":"a","verdict":"pass"}]')\" = 0 ]"
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && [ "$(cat "$R/raw_report.txt")" = "no json" ]; }
