@@ -152,7 +152,7 @@ else
 
     vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
       local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
-      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
       cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
       echo "$d"
     }
@@ -220,7 +220,7 @@ else
     # a baseline exists (home__0 plain); the build under test is given by shots/
     prep() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000 100,100,100,100; }
     run_with() { prep; printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?; }
-    sev() { printf '[{"file":"home__0.png","verdict":"x","severity":%s,"findings":[]}]' "$1"; }
+    sev() { printf '[{"file":"home__0.png","verdict":"x","severity":%s,"seen":"s","findings":[]}]' "$1"; }
     nothing_changed() {
       reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000
       vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/report.json")" = "[]" ]
@@ -248,19 +248,19 @@ else
       reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000
       printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
     }
-    check "a blank page fails even if the judge says severity 0" bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert r['severity']==5 and r['verdict']=='fail' and len(r['findings'])==1\""
+    check "a blank page fails even if the judge says severity 0" bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert r['severity']==5 and r['verdict']=='fail' and len(r['findings'])==1\""
     check "a blank page fails even if the judge leaves it out"   bash -c "[ \"$(blank_case '[]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json')); assert r[0]['file']=='home__0.png' and r[0]['severity']==5\""
-    check "a judge verdict already at severity 5 is kept as is"   bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"fail","severity":5,"findings":[{"what":"x"}]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert len(r['findings'])==1\""
+    check "a judge verdict already at severity 5 is kept as is"   bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"fail","severity":5,"seen":"s","findings":[{"what":"x"}]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert len(r['findings'])==1\""
     echo "-- vr.sh: big-diff warnings, unjudged files, batching"
     big_diff() {  # big_diff <canned reply> [extra env]: 51% of the pixels differ (not blank)
       reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
       printf '%s' "$1" > "$R/claude.out"; env ${2:-X=1} bash -c "cd '$R' && SHOTS='$R/shots' CLAUDE_STUB_LOG='$R/claude.log' CLAUDE_STUB_OUT='$R/claude.out' PATH='$R/bin:'\$PATH ./vr.sh http://stub" >"$WORK/vr.out" 2>&1; echo $?
     }
     warned() { python3 -c "import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['home__0.png'], w"; }
-    check "judge says 0 but 51% of the pixels differ: warns, exit code unchanged" bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]')\" = 0 ] && grep -q '^WARNING home__0.png: 51% of pixels differ' '$WORK/vr.out' && warned"
-    check "no warning when the judge already fails the page"                 bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"fail","severity":4,"findings":[]}]')\" = 1 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
-    check "no warning below the threshold (VR_WARN_DIFF_PCT=70)"              bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]' VR_WARN_DIFF_PCT=70)\" = 0 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
-    check "a lower threshold warns on a smaller diff (VR_WARN_DIFF_PCT=1)"     bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":2,"findings":[]}]' VR_WARN_DIFF_PCT=1)\" = 0 ] && warned"
+    check "judge says 0 but 51% of the pixels differ: warns, exit code unchanged" bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]')\" = 0 ] && grep -q '^WARNING home__0.png: 51% of pixels differ' '$WORK/vr.out' && warned"
+    check "no warning when the judge already fails the page"                 bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"fail","severity":4,"seen":"s","findings":[]}]')\" = 1 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "no warning below the threshold (VR_WARN_DIFF_PCT=70)"              bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]' VR_WARN_DIFF_PCT=70)\" = 0 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "a lower threshold warns on a smaller diff (VR_WARN_DIFF_PCT=1)"     bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":2,"seen":"s","findings":[]}]' VR_WARN_DIFF_PCT=1)\" = 0 ] && warned"
     check "a changed file the judge never mentions is warned about"            bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'no verdict' '$R/warnings.json'"
 
     multi() {  # multi <n> <batch size> [reply for call 1] [reply for call 2] ...: n changed files, judged <batch> at a time
@@ -270,8 +270,8 @@ else
       VR_BATCH=$b vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
     }
     calls() { wc -l < "$R/claude.log.calls" | tr -d ' '; }
-    ok() { printf '[{"file":"f%s.png","verdict":"pass","severity":0,"findings":[]}]' "$1"; }
-    rep() { local out="" ; for i in "$@"; do out="$out${out:+,}{\"file\":\"f$i.png\",\"verdict\":\"pass\",\"severity\":${SEV:-0},\"findings\":[]}"; done; printf '[%s]' "$out"; }
+    ok() { printf '[{"file":"f%s.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]' "$1"; }
+    rep() { local out="" ; for i in "$@"; do out="$out${out:+,}{\"file\":\"f$i.png\",\"verdict\":\"pass\",\"severity\":${SEV:-0},\"seen\":\"s\",\"findings\":[]}"; done; printf '[%s]' "$out"; }
     check "5 files, batch 2: three judge calls"                                bash -c "multi_out=\"$(multi 5 2 "$(rep 1 2)" "$(rep 3 4)" "$(rep 5)")\"; [ \"\$multi_out\" = 0 ] && [ \"$(calls)\" = 3 ]"
     check "each call is asked about only its own files"                         bash -c "grep -c 'f1.png f2.png' '$R/claude.log' | grep -q 1 && ! grep 'f1.png f2.png' '$R/claude.log' | grep -q 'f3.png' && grep -q 'f5.png' '$R/claude.log'"
     check "the batches' reports are merged into one report.json"               bash -c "python3 -c \"import json; r=json.load(open('$R/report.json')); assert sorted(x['file'] for x in r)==['f1.png','f2.png','f3.png','f4.png','f5.png'], r\""
@@ -279,6 +279,44 @@ else
     check "a finding in a later batch still fails the run"                      bash -c "[ \"$(SEV=4 multi 5 2 "$(SEV=0 rep 1 2)" "$(SEV=0 rep 3 4)" "$(SEV=4 rep 5)")\" = 1 ]"
     check "a batch with no JSON fails the run and names its reply file"        bash -c "[ \"$(multi 5 2 "$(rep 1 2)" 'sorry, cannot open images' "$(rep 5)")\" = 1 ] && grep -q 'raw_report.2.txt' '$WORK/vr.out'"
     check "a file the judge dropped from its batch is warned about"            bash -c "[ \"$(multi 3 3 "$(rep 1 2)")\" = 0 ] && python3 -c \"import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['f3.png'], w\""
+
+    echo "-- vr.sh: second look at suspect verdicts"
+    F1='[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]'                       # no "seen"
+    S0='[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]'
+    S4='[{"file":"home__0.png","verdict":"fail","severity":4,"seen":"a broken page","findings":[{"what":"it is broken"}]}]'
+    S2='[{"file":"home__0.png","verdict":"fail","severity":2,"findings":[]}]'
+    # second <first reply> <second reply> [env assignment]: a 1% diff on home__0.png (under the re-check threshold)
+    second() { prep; printf '%s' "$1" > "$R/claude.out"; printf '%s' "$2" > "$R/claude.out.2"; env ${3:-X=1} bash -c "cd '$R' && SHOTS='$R/shots' CLAUDE_STUB_LOG='$R/claude.log' CLAUDE_STUB_OUT='$R/claude.out' PATH='$R/bin:'\$PATH ./vr.sh http://stub" >"$WORK/vr.out" 2>&1; echo $?; }
+    json() { python3 -c "import json,sys; d=json.load(open('$R/$1')); $2"; }
+    t_no_recheck()   { [ "$(second "$S0" "$S4")" = 0 ] && [ "$(calls)" = 1 ]; }
+    t_recheck_raises() { [ "$(second "$F1" "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity']==0 and 'rechecked' in r, r"; }
+    t_recheck_prompt() { second "$F1" "$S0" >/dev/null; grep -q 'independent second look' "$R/claude.log" && [ "$(grep -c 'home__0.png' "$R/claude.log")" -ge 2 ]; }
+    t_never_lowers()   { [ "$(second "$S2" "$S0")" = 0 ] && json report.json "r=d[0]; assert r['severity']==2 and r['first_severity']==2, r"; }
+    t_bad_recheck()    { [ "$(second "$F1" "I could not open it.")" = 0 ] && json warnings.json "assert any('nothing usable' in w['warning'] for w in d), d" && json report.json "assert d[0]['severity']==0"; }
+    t_bad_recheck_keeps_fail() { [ "$(second '[{"file":"home__0.png","verdict":"fail","severity":4,"findings":[]}]' "no json")" = 1 ]; }
+    t_big_diff_recheck() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$S0" > "$R/claude.out"; printf '%s' "$S0" > "$R/claude.out.2"; vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 0 ] && [ "$(calls)" = 2 ] && json report.json "assert 'rechecked' in d[0] and '51%' in d[0]['rechecked'], d" && grep -q '^WARNING home__0.png: 51%' "$WORK/vr.out"; }
+    t_recheck_threshold() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$S0" > "$R/claude.out"; VR_RECHECK_DIFF_PCT=60 vrrun "$R" >"$WORK/vr.out" 2>&1; [ "$(calls)" = 1 ]; }
+    t_blank_not_rechecked() { [ "$(blank_case "$F1")" = 1 ] && [ "$(calls)" = 1 ]; }
+    t_missing_rechecked()   { [ "$(second '[]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "assert d[0]['file']=='home__0.png' and d[0]['severity']==4, d"; }
+    t_cap() { multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null; rm -f "$R/claude.log.calls"
+      VR_RECHECK_MAX=1 multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null
+      [ "$(calls)" = 2 ] && json warnings.json "assert sum('Not re-checked' in w['warning'] for w in d)==2, d"; }
+    t_rechecked_all_when_under_cap() { multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null; [ "$(calls)" = 4 ]; }
+    check "a described, passed page with a small diff is not re-checked"        t_no_recheck
+    check "no description: re-checked, and a higher second severity fails the run" t_recheck_raises
+    check "the re-check prompt is for one file and asks for an independent look"  t_recheck_prompt
+    check "a second opinion never lowers a severity"                              t_never_lowers
+    check "an unusable re-check keeps the first verdict and warns"                t_bad_recheck
+    check "an unusable re-check does not hide a first-pass failure"               t_bad_recheck_keeps_fail
+    check "judge said 0 with 51% of pixels changed: re-checked, and still warned" t_big_diff_recheck
+    check "VR_RECHECK_DIFF_PCT sets that threshold (60: no re-check at 51%)"      t_recheck_threshold
+    check "a page forced to severity 5 as blank is not re-checked"                t_blank_not_rechecked
+    check "a file the judge left out is re-checked"                               t_missing_rechecked
+    check "undescribed verdicts for 3 files: 3 re-checks (1 batch call + 3)"      t_rechecked_all_when_under_cap
+    check "VR_RECHECK_MAX caps the re-checks and warns about the rest"            t_cap
 
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed

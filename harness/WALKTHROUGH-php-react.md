@@ -351,6 +351,14 @@ prints the paths that are not in `pages.json`, plus any broken links. It skips l
 `"discover": { "ignore": ["^/admin"] }` adds your own skip patterns. It changes nothing: copy over the ones that matter.
 Pages built from route parameters (`/invoices/123`) are found only if something links to them; list an example by hand.
 
+How the judge is kept honest: it is shown 6 screenshot pairs per call (`VR_BATCH`) and must say in one sentence what each
+page shows (`seen`). Any file it skipped, did not describe, or passed while 5% or more of its pixels changed
+(`VR_RECHECK_DIFF_PCT`) is judged again on its own, and the second opinion can only raise a severity. At most 12 files are
+re-checked per run (`VR_RECHECK_MAX`); the rest get a warning. Independently of the judge, a page that went blank always
+fails, and a page it passed while 50% or more of the pixels changed (`VR_WARN_DIFF_PCT`) gets a `WARNING` line and an
+entry in `warnings.json`; warnings never change the exit code. An actual HTTP 4xx/5xx stops the run at capture time, so the
+judge only has to catch pages that answer 200 but look wrong (a styled "not found", a maintenance page, a sign-in gate).
+
 Then:
 
 ```bash
