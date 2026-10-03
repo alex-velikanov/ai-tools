@@ -1,0 +1,4 @@
+  - package-ecosystem: gomod
+    directory: "{{GO_DIR_SLASH}}"
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

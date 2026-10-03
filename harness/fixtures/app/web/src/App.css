@@ -1,0 +1,62 @@
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  text-align: left;
+}
+
+.page nav {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid #333;
+}
+
+.plans {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.plan {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  flex: 1;
+  min-width: 180px;
+}
+
+.plan .price {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 400px;
+}
+
+form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.error {
+  color: #e5484d;
+  font-size: 0.875rem;
+}
