@@ -169,6 +169,8 @@ else
     png "$F" current/big.png     1000 1000 100,100,100,100  # 10,000 px differ
     png "$F" current/resized.png 1000 1200                  # page got taller
     png "$F" current/extra.png   1000 1000                  # exists only in current/ (new page or new tile)
+    png "$F" baseline/wentblank.png 1000 1000 100,100,300,300; png "$F" current/wentblank.png 1000 1000      # real page -> flat white
+    png "$F" baseline/stillblank.png 1000 1000;                png "$F" current/stillblank.png 1000 1000 10,10,12,12   # was already blank
     CH=" $(changed_of "$F") "
     check "identical image is unchanged"                     bash -c "! echo '$CH' | grep -q ' same.png '"
     check "a difference of 40 px is ignored as noise"        bash -c "! echo '$CH' | grep -q ' noise.png '"
@@ -177,6 +179,8 @@ else
     check "an image missing from current/ is changed"        bash -c "echo '$CH' | grep -q ' gone.png '"
     check "an image only in current/ is changed (new page or tile)" bash -c "echo '$CH' | grep -q ' extra.png '"
     check "a size mismatch is changed"                       bash -c "echo '$CH' | grep -q ' resized.png '"
+    check "a page that went flat/blank is listed in blank.json" bash -c "python3 -c \"import json; assert json.load(open('$F/blank.json'))==['wentblank.png'], open('$F/blank.json').read()\""
+    check "a page that was already blank, or just changed a lot, is not" bash -c "echo '$CH' | grep -q ' stillblank.png ' && ! grep -q 'stillblank\|big.png' '$F/blank.json'"
     check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
 
     echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
@@ -236,6 +240,13 @@ else
     check "brackets with no report inside fail cleanly, without a traceback" bash -c "[ \"$(run_with 'Checked [2 pages], see [1].')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && ! grep -q Traceback '$WORK/vr.out'"
     check "output with no JSON array fails and shows the text" bash -c "[ \"$(run_with 'I could not open the images.')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && grep -q 'could not open' '$WORK/vr.out'"
     check "a record with no severity counts as 0"            bash -c "[ \"$(run_with '[{"file":"a","verdict":"pass"}]')\" = 0 ]"
+    blank_case() {  # blank_case <canned model reply>: baseline is a real page, the build under test is flat white
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000
+      printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    check "a blank page fails even if the judge says severity 0" bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert r['severity']==5 and r['verdict']=='fail' and len(r['findings'])==1\""
+    check "a blank page fails even if the judge leaves it out"   bash -c "[ \"$(blank_case '[]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json')); assert r[0]['file']=='home__0.png' and r[0]['severity']==5\""
+    check "a judge verdict already at severity 5 is kept as is"   bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"fail","severity":5,"findings":[{"what":"x"}]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert len(r['findings'])==1\""
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && [ "$(cat "$R/raw_report.txt")" = "no json" ]; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed
   else

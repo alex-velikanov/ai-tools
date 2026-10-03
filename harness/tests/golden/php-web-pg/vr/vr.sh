@@ -32,7 +32,7 @@ if [ -z "$(ls -A baseline 2>/dev/null)" ]; then
   exit 2
 fi
 
-rm -rf current changed.json report.json raw_report.txt
+rm -rf current changed.json blank.json report.json raw_report.txt
 OUT=current BASE_URL=$URL node shoot.mjs
 node filter.mjs
 
@@ -73,6 +73,17 @@ if report is None:
     print('No JSON array found in model output:', file=sys.stderr)
     print(text, file=sys.stderr)
     sys.exit(1)
+
+# Pages that went blank always fail, whatever the judge said (it has been seen to skim past them).
+by_file = {r.get('file'): r for r in report}
+for f in json.load(open('blank.json')):
+    note = {'what': 'The page is blank (one flat colour) where the baseline was not.', 'where': 'entire page', 'confidence': 'high'}
+    r = by_file.get(f)
+    if r is None:
+        report.append({'file': f, 'verdict': 'fail', 'severity': 5, 'findings': [note]})
+    elif r.get('severity', 0) < 5:
+        r['verdict'], r['severity'] = 'fail', 5
+        r['findings'] = (r['findings'] if isinstance(r.get('findings'), list) else []) + [note]
 
 json.dump(report, open('report.json', 'w'), indent=2)
 
