@@ -136,9 +136,6 @@ print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
 
 echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stubbed) =="
-# xfail <name> <cmd...>: a KNOWN GAP in the vr tool. Not a failure while the gap exists; once the command passes,
-# the gap is fixed, so turn this into a normal check().
-xfail() { local name="$1"; shift; if "$@" >"$WORK/last.log" 2>&1; then pass "$name (gap fixed: make this a check)"; else printf '  XFAIL %s\n' "$name"; fi; }
 VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
@@ -157,46 +154,75 @@ else
     changed_of() { (cd "$1" && node filter.mjs >/dev/null 2>&1 && python3 -c "import json; print(' '.join(sorted(json.load(open('changed.json')))))"); }
     vrrun() { (cd "$1" && SHOTS="$1/shots" CLAUDE_STUB_LOG="$1/claude.log" CLAUDE_STUB_OUT="$1/claude.out" PATH="$1/bin:$PATH" ./vr.sh http://stub); }
 
-    echo "-- filter.mjs: which screenshots count as changed (1000x1000 = 1,000,000 px, threshold 0.1% = 1,000 px)"
+    echo "-- filter.mjs: which screenshots count as changed (threshold: more than 50 differing pixels)"
     F="$(vrdir filter)"; mkdir -p "$F/baseline" "$F/current"
-    for n in same tiny big gone resized; do png "$F" "baseline/$n.png" 1000 1000; done
+    for n in same noise tiny big gone resized; do png "$F" "baseline/$n.png" 1000 1000; done
     png "$F" current/same.png    1000 1000
-    png "$F" current/tiny.png    1000 1000 10,10,10,10      # 100 px differ: under the threshold
+    png "$F" current/noise.png   1000 1000 10,10,5,8        # 40 px differ: under the threshold
+    png "$F" current/tiny.png    1000 1000 10,10,10,10      # 100 px differ: a small element gone, on a 1,000,000 px image
     png "$F" current/big.png     1000 1000 100,100,100,100  # 10,000 px differ
     png "$F" current/resized.png 1000 1200                  # page got taller
     png "$F" current/extra.png   1000 1000                  # exists only in current/ (new page or new tile)
-    check "identical image is unchanged"                   bash -c "! echo ' $(changed_of "$F") ' | grep -q ' same.png '"
-    check "a large difference is changed"                  bash -c "echo ' $(changed_of "$F") ' | grep -q ' big.png '"
-    check "a missing current image is changed"             bash -c "echo ' $(changed_of "$F") ' | grep -q ' gone.png '"
-    check "a size mismatch is changed"                     bash -c "echo ' $(changed_of "$F") ' | grep -q ' resized.png '"
-    check "a difference under 0.1% of pixels is ignored (documented threshold)" bash -c "! echo ' $(changed_of "$F") ' | grep -q ' tiny.png '"
-    xfail "an image only in current/ is reported (new page or tile)"            bash -c "echo ' $(changed_of "$F") ' | grep -q ' extra.png '"
-    xfail "a small but real change (a 10x10 px element gone) is caught"        bash -c "echo ' $(changed_of "$F") ' | grep -q ' tiny.png '"
+    CH=" $(changed_of "$F") "
+    check "identical image is unchanged"                     bash -c "! echo '$CH' | grep -q ' same.png '"
+    check "a difference of 40 px is ignored as noise"        bash -c "! echo '$CH' | grep -q ' noise.png '"
+    check "a small real change (100 px) is caught"           bash -c "echo '$CH' | grep -q ' tiny.png '"
+    check "a large difference is changed"                    bash -c "echo '$CH' | grep -q ' big.png '"
+    check "an image missing from current/ is changed"        bash -c "echo '$CH' | grep -q ' gone.png '"
+    check "an image only in current/ is changed (new page or tile)" bash -c "echo '$CH' | grep -q ' extra.png '"
+    check "a size mismatch is changed"                       bash -c "echo '$CH' | grep -q ' resized.png '"
+    check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
 
-    echo "-- vr.sh: baseline rotation, report parsing, exit code"
-    R="$(vrdir run)"; png "$R" shots/home__0.png 1000 1000
-    xfail "first run, with no baseline yet, succeeds"        vrrun "$R"
-    rm -rf "$R/current" "$R/baseline"
-    mkdir -p "$R/current"; png "$R" current/marker__0.png 100 100    # a previous run
-    vrrun "$R" >/dev/null 2>&1
-    check "the previous run becomes the baseline"            test -f "$R/baseline/marker__0.png"
-    check "the new run is written to current/"               test -f "$R/current/home__0.png" -a ! -f "$R/current/marker__0.png"
-    check "the model is pointed at rubric.md and changed.json" bash -c "grep -q 'rubric.md' '$R/claude.log' && grep -q 'changed.json' '$R/claude.log'"
+    echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
+    R="$(vrdir run)"
+    reset() { rm -rf "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/shots"/*; }
+    reset; png "$R" shots/home__0.png 1000 1000
+    (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh --record http://stub >"$WORK/vr.out" 2>&1)
+    check "--record writes the baseline"                     bash -c "test -f '$R/baseline/home__0.png' && grep -q 'baseline recorded: 1' '$WORK/vr.out'"
+    check "--record leaves no temp folder behind"            test ! -e "$R/baseline.new"
+    check "--record does not call the model"                 test ! -e "$R/claude.log"
 
-    prep() { rm -rf "$R/baseline" "$R/current"; mkdir -p "$R/current"; png "$R" current/home__0.png 1000 1000; }
+    bad_shots() { png "$R" shots/home__0.png 1000 1000 100,100,100,100; }   # the "broken deploy"
+    reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1)
+    cp "$R/baseline/home__0.png" "$R/baseline.copy"
+    bad_shots; echo '[{"file":"home__0.png","severity":4}]' > "$R/claude.out"
+    vrrun "$R" >/dev/null 2>&1; first=$?; vrrun "$R" >/dev/null 2>&1; second=$?
+    check "a broken build fails the compare"                 test "$first" = 1
+    check "re-running does NOT make the broken build the baseline" test "$second" = 1
+    check "the baseline is untouched by compare runs"        bash -c "cmp -s '$R/baseline/home__0.png' '$R/baseline.copy' && ! cmp -s '$R/baseline/home__0.png' '$R/current/home__0.png'"
+    check "--record again accepts the new build"             bash -c "cd '$R' && SHOTS='$R/shots' ./vr.sh --record http://stub >/dev/null 2>&1 && cmp -s baseline/home__0.png shots/home__0.png"
+
+    reset
+    rc=0; (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh http://stub >"$WORK/vr.out" 2>&1) || rc=$?
+    check "with no baseline it exits 2 and says to --record" bash -c "[ $rc = 2 ] && grep -q 'vr.sh --record' '$WORK/vr.out'"
+    rc=0; (cd "$R" && ./vr.sh >"$WORK/vr.out" 2>&1) || rc=$?
+    check "with no URL it prints usage and exits 2"          bash -c "[ $rc = 2 ] && grep -q usage '$WORK/vr.out'"
+
+    reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1)
+    rc=0; (cd "$R" && SHOTS="$R/nonexistent" ./vr.sh --record http://stub >/dev/null 2>&1) || rc=$?
+    check "a failed --record keeps the old baseline"         bash -c "[ $rc != 0 ] && test -f '$R/baseline/home__0.png' && test ! -e '$R/baseline.new'"
+
+    # a baseline exists (home__0 plain); the build under test is given by shots/
+    prep() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000 100,100,100,100; }
     run_with() { prep; printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?; }
     sev() { printf '[{"file":"home__0.png","verdict":"x","severity":%s,"findings":[]}]' "$1"; }
+    nothing_changed() {
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000
+      vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/report.json")" = "[]" ]
+    }
+    check "nothing changed: passes without calling the model" nothing_changed
+    check "the model is pointed at rubric.md and changed.json" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'changed.json' '$R/claude.log'"
     check "severity 2 passes (exit 0)"                       bash -c "[ \"$(run_with "$(sev 2)")\" = 0 ]"
     check "severity 3 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 3)")\" = 1 ]"
     check "severity 5 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 5)")\" = 1 ]"
     check "worst severity is the one that gates"             bash -c "[ \"$(run_with '[{"file":"a","severity":1},{"file":"b","severity":4}]')\" = 1 ]"
-    check "an empty array passes"                            bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q '0 pages compared' '$WORK/vr.out'"
+    check "an empty array from the model passes"             bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q '0 pages compared' '$WORK/vr.out'"
     check "JSON inside markdown fences is extracted"         bash -c "[ \"$(run_with "$(printf '```json\n%s\n```' "$(sev 2)")")\" = 0 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['file']=='home__0.png'\""
     check "JSON surrounded by prose is extracted"            bash -c "[ \"$(run_with "Here is the report: $(sev 3) Hope that helps.")\" = 1 ]"
     check "output with no JSON array fails and shows the text" bash -c "[ \"$(run_with 'I could not open the images.')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && grep -q 'could not open' '$WORK/vr.out'"
     check "a record with no severity counts as 0"            bash -c "[ \"$(run_with '[{"file":"a","verdict":"pass"}]')\" = 0 ]"
-    stale_report_removed() { prep; echo stale > "$R/report.json"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ]; }
-    xfail "a stale report.json is removed when a run fails to parse" stale_report_removed
+    stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && [ "$(cat "$R/raw_report.txt")" = "no json" ]; }
+    check "a stale report.json is removed when a run fails to parse" stale_files_removed
   else
     fail "vr dependencies install"; tail -8 "$WORK/npm.log" | sed 's/^/        /'
   fi

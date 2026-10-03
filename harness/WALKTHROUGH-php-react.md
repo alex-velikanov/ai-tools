@@ -320,12 +320,16 @@ the reviewer missed, add it as a new case.
 Edit `vr/pages.json` to your real URLs, e.g. `["/", "/cart", "/checkout"]`, then:
 
 ```bash
-vr/vr.sh https://staging.example.com     # before deploy: captures the baseline
+vr/vr.sh --record https://staging.example.com   # before deploy: record the known-good build as the baseline
 # ...deploy...
-vr/vr.sh https://staging.example.com     # after: compares against the baseline
+vr/vr.sh https://staging.example.com            # after: compare against the baseline
 ```
 
-Unchanged pages are dropped by a pixel check first, so the model only judges pages that
+The baseline only changes when you run `--record`, so re-running the check never turns a broken
+deploy into the new normal. Without a baseline, `vr.sh` stops and tells you to record one. Run
+`--record` again after each deploy you have checked and accept.
+
+Unchanged pages are dropped by a pixel check first (a screenshot only on one side counts as changed), so the model only judges pages that
 changed. It exits non-zero at severity 3 or above. Calibrate `vr/rubric.md` against about 20
 labelled before/after pairs before you trust it, and re-run them when you switch models.
 It needs a running site; locally that is `docker compose up -d web`, then `vr/vr.sh http://localhost:5173`.
