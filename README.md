@@ -115,6 +115,26 @@ Requirements: different model from the generator, fresh context, diff-scoped, en
 
 Keep `.review-log.md` in the repo — findings you dismissed and why, fed into each review. Otherwise every session re-litigates the same rejected points forever.
 
+**Two reviews, two jobs.** The requirements above are met by two different reviewers, kept deliberately:
+
+| | Inner loop: `requesting-code-review`, plus the per-task reviews in `subagent-driven-development` | Outer gate: `/review-code` ([`skills/review-code`](skills/review-code/SKILL.md)) |
+|---|---|---|
+| When | Automatically, after every task | Once, before the PR |
+| Context | A fresh subagent with crafted context | A fresh session you start |
+| Checks | The work against the plan, and code quality | The branch against the plan or spec, then architecture and quality |
+| Different model from the author | No: the subagent can be the same model | Yes: it flags it if it is the author model |
+| Every file accounted for | No | Yes: a verdict for each changed file |
+| Reads `.review-log.md` | No | Yes |
+| Cost | Cheap, repeated | Heavier, run once |
+
+The inner loop catches a wrong turn while it is still cheap to undo. The outer gate supplies the two things the inner loop
+structurally can't: independence from the author model and per-file accountability. So the section's requirements are
+met by the pair, not by `requesting-code-review` alone.
+
+*Watch this:* `subagent-driven-development` also runs a broad whole-branch review at the end, so the outer gate partly
+overlaps it. If `/review-code` finds nothing over several PRs that the inner reviews hadn't already, that is the evidence
+to drop it. Measure it with the eval set rather than guessing.
+
 ### 4.3 Semgrep CE — free, local
 
 LGPL-2.1, no account, code never leaves your machine.
