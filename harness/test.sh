@@ -2,7 +2,8 @@
 # Tests for the harness and the skills installer.
 #
 #   ./test.sh                  fast tier: seconds, starts no containers. Golden snapshots of generated
-#                              files, compose validity, error paths, idempotency, skills installer, doc links.
+#                              files, compose validity, error paths, idempotency, skills installer, the vr tool
+#                              (pixel filter, baseline rotation, report parsing and exit code), doc links.
 #   ./test.sh full             fast tier + real containers: the demo app end to end, and two projects with
 #                              different PHP / Node / database versions running side by side.
 #   ./test.sh --update-golden  regenerate tests/golden/ (review the git diff before committing it)
@@ -41,6 +42,9 @@ echo "== fast: syntax =="
 for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/harvest.sh" "$HARNESS/modules/web/root/vr/vr.sh"; do
   check "bash -n ${f#$REPO/}" bash -n "$f"
 done
+if have node; then
+  for f in "$HARNESS"/modules/web/root/vr/*.mjs "$HARNESS"/tests/vr/*.mjs; do check "node --check ${f#$REPO/}" node --check "$f"; done
+else skip "node not installed: .mjs syntax checks"; fi
 
 echo; echo "== fast: golden snapshots of generated files =="
 # Project dir is always named "proj" so paths and the compose project name are stable.
@@ -130,6 +134,73 @@ for d in sorted(os.listdir(sys.argv[1])):
     if not re.search(r"^description:\s*\S", head, re.M): bad.append(d + ": no description")
 print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
+
+echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stubbed) =="
+# xfail <name> <cmd...>: a KNOWN GAP in the vr tool. Not a failure while the gap exists; once the command passes,
+# the gap is fixed, so turn this into a normal check().
+xfail() { local name="$1"; shift; if "$@" >"$WORK/last.log" 2>&1; then pass "$name (gap fixed: make this a check)"; else printf '  XFAIL %s\n' "$name"; fi; }
+VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
+if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
+else
+  VRDEPS="$WORK/vr-deps"; mkdir -p "$VRDEPS"; cp "$VRSRC/package.json" "$VRDEPS/"
+  if (cd "$VRDEPS" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund >"$WORK/npm.log" 2>&1); then
+    pass "vr dependencies install (playwright, pixelmatch, pngjs)"
+    check "vr dependencies import" bash -c "cd '$VRDEPS' && node -e \"import('pngjs').then(()=>import('pixelmatch')).then(()=>import('playwright'))\""
+
+    vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
+      local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
+      cp "$VRSRC"/{vr.sh,filter.mjs,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
+      echo "$d"
+    }
+    png() { (cd "$1" && node png.mjs "${@:2}"); }   # png <dir> <out> <w> <h> [x,y,w,h]
+    changed_of() { (cd "$1" && node filter.mjs >/dev/null 2>&1 && python3 -c "import json; print(' '.join(sorted(json.load(open('changed.json')))))"); }
+    vrrun() { (cd "$1" && SHOTS="$1/shots" CLAUDE_STUB_LOG="$1/claude.log" CLAUDE_STUB_OUT="$1/claude.out" PATH="$1/bin:$PATH" ./vr.sh http://stub); }
+
+    echo "-- filter.mjs: which screenshots count as changed (1000x1000 = 1,000,000 px, threshold 0.1% = 1,000 px)"
+    F="$(vrdir filter)"; mkdir -p "$F/baseline" "$F/current"
+    for n in same tiny big gone resized; do png "$F" "baseline/$n.png" 1000 1000; done
+    png "$F" current/same.png    1000 1000
+    png "$F" current/tiny.png    1000 1000 10,10,10,10      # 100 px differ: under the threshold
+    png "$F" current/big.png     1000 1000 100,100,100,100  # 10,000 px differ
+    png "$F" current/resized.png 1000 1200                  # page got taller
+    png "$F" current/extra.png   1000 1000                  # exists only in current/ (new page or new tile)
+    check "identical image is unchanged"                   bash -c "! echo ' $(changed_of "$F") ' | grep -q ' same.png '"
+    check "a large difference is changed"                  bash -c "echo ' $(changed_of "$F") ' | grep -q ' big.png '"
+    check "a missing current image is changed"             bash -c "echo ' $(changed_of "$F") ' | grep -q ' gone.png '"
+    check "a size mismatch is changed"                     bash -c "echo ' $(changed_of "$F") ' | grep -q ' resized.png '"
+    check "a difference under 0.1% of pixels is ignored (documented threshold)" bash -c "! echo ' $(changed_of "$F") ' | grep -q ' tiny.png '"
+    xfail "an image only in current/ is reported (new page or tile)"            bash -c "echo ' $(changed_of "$F") ' | grep -q ' extra.png '"
+    xfail "a small but real change (a 10x10 px element gone) is caught"        bash -c "echo ' $(changed_of "$F") ' | grep -q ' tiny.png '"
+
+    echo "-- vr.sh: baseline rotation, report parsing, exit code"
+    R="$(vrdir run)"; png "$R" shots/home__0.png 1000 1000
+    xfail "first run, with no baseline yet, succeeds"        vrrun "$R"
+    rm -rf "$R/current" "$R/baseline"
+    mkdir -p "$R/current"; png "$R" current/marker__0.png 100 100    # a previous run
+    vrrun "$R" >/dev/null 2>&1
+    check "the previous run becomes the baseline"            test -f "$R/baseline/marker__0.png"
+    check "the new run is written to current/"               test -f "$R/current/home__0.png" -a ! -f "$R/current/marker__0.png"
+    check "the model is pointed at rubric.md and changed.json" bash -c "grep -q 'rubric.md' '$R/claude.log' && grep -q 'changed.json' '$R/claude.log'"
+
+    prep() { rm -rf "$R/baseline" "$R/current"; mkdir -p "$R/current"; png "$R" current/home__0.png 1000 1000; }
+    run_with() { prep; printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?; }
+    sev() { printf '[{"file":"home__0.png","verdict":"x","severity":%s,"findings":[]}]' "$1"; }
+    check "severity 2 passes (exit 0)"                       bash -c "[ \"$(run_with "$(sev 2)")\" = 0 ]"
+    check "severity 3 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 3)")\" = 1 ]"
+    check "severity 5 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 5)")\" = 1 ]"
+    check "worst severity is the one that gates"             bash -c "[ \"$(run_with '[{"file":"a","severity":1},{"file":"b","severity":4}]')\" = 1 ]"
+    check "an empty array passes"                            bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q '0 pages compared' '$WORK/vr.out'"
+    check "JSON inside markdown fences is extracted"         bash -c "[ \"$(run_with "$(printf '```json\n%s\n```' "$(sev 2)")")\" = 0 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['file']=='home__0.png'\""
+    check "JSON surrounded by prose is extracted"            bash -c "[ \"$(run_with "Here is the report: $(sev 3) Hope that helps.")\" = 1 ]"
+    check "output with no JSON array fails and shows the text" bash -c "[ \"$(run_with 'I could not open the images.')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && grep -q 'could not open' '$WORK/vr.out'"
+    check "a record with no severity counts as 0"            bash -c "[ \"$(run_with '[{"file":"a","verdict":"pass"}]')\" = 0 ]"
+    stale_report_removed() { prep; echo stale > "$R/report.json"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ]; }
+    xfail "a stale report.json is removed when a run fails to parse" stale_report_removed
+  else
+    fail "vr dependencies install"; tail -8 "$WORK/npm.log" | sed 's/^/        /'
+  fi
+fi
 
 echo; echo "== fast: docs =="
 check "relative markdown links resolve" python3 - "$REPO" <<'PY'
