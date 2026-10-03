@@ -51,6 +51,12 @@ PHPUnit/PHPStan/`go test -race`/web build/Playwright, and eval harvesting.
 
 The design rationale lives in `../README.md` (the baseline doc).
 
+## Related
+
+- **Dev flow** — which skill runs at which step of a task, and why: [`../skills/dev-flow/DEV-FLOW.md`](../skills/dev-flow/DEV-FLOW.md). Run `/dev-flow` in a project to see which step you're on.
+- **Skills** (`/critique-plan`, `/verify`, `/review-code`, `/cleanup`, `/harness-init`, `/dev-flow`) live in [`../skills/`](../skills/README.md). They are installed per machine, not per project, so `harness-init` does not copy them.
+- **Walkthrough** — a full new-project example: [`WALKTHROUGH-php-react.md`](WALKTHROUGH-php-react.md).
+
 ## License
 
 MIT — see [LICENSE](../LICENSE).

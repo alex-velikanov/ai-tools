@@ -26,6 +26,12 @@ node -v && npm -v && claude --version && command -v harness-init
 `harness-init` prints this same check (the "Tools" block) on every run, with the install
 command for anything missing.
 
+Skills are a per-machine install too, not per project (they're used from step 5 on):
+
+```bash
+~/Documents/DEV/TOOLS/skills/install.sh     # links my skills into ~/.claude/skills (Claude Code and Cursor both read it)
+```
+
 ---
 
 ## 1. Create the two apps ✅
@@ -198,6 +204,10 @@ Rule of thumb: **add a line only after an agent makes the same mistake twice.** 
 
 ## 5. Daily workflow
 
+This is the short version. The full flow, with the reason for each step and when to skip one, is in
+[`../skills/dev-flow/DEV-FLOW.md`](../skills/dev-flow/DEV-FLOW.md); run `/dev-flow` in the project to see which
+step you're on and what to run next.
+
 The split from the baseline doc: **if you can specify it, delegate it (Claude Code); if you
 have to watch it, do it in Cursor.**
 
@@ -229,7 +239,8 @@ dev only, never production.
    ```
    /review-code
    ```
-   Report-only; it lists issues by severity without editing.
+   Report-only. It checks the branch against the plan or spec (`docs/superpowers/`), gives a verdict for every changed
+   file, and reads `.review-log.md` so dismissed findings aren't raised again. It runs only when you type it.
 3. Semgrep already ran on every commit. That's the zero-variance layer.
 
 Anything you review and *dismiss* goes in `.review-log.md` with a reason, so the next review
