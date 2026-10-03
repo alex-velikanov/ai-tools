@@ -42,11 +42,13 @@ if [ "$(tr -d ' \n' < changed.json)" = "[]" ]; then
   exit 0
 fi
 
+# Read-only: the judge may open files but not run anything. VR_MODEL pins the model so results are comparable between runs.
 claude -p "Read rubric.md. For each filename in changed.json, compare \
 baseline/<file> against current/<file> and apply the rubric. Print ONLY a \
 JSON array as [{file, verdict, severity, findings}] to stdout — no prose, \
 no markdown fences. A file present in only one of the two folders means a \
-page or section was added or removed: report it." > raw_report.txt
+page or section was added or removed: report it." \
+  --allowedTools Read ${VR_MODEL:+--model "$VR_MODEL"} > raw_report.txt
 
 # Model output isn't always fence-free despite instructions — extract the
 # JSON array defensively instead of trusting exact compliance.

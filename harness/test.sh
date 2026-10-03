@@ -6,6 +6,8 @@
 #                              (pixel filter, baseline rotation, report parsing and exit code), doc links.
 #   ./test.sh full             fast tier + real containers: the demo app end to end, and two projects with
 #                              different PHP / Node / database versions running side by side.
+#   ./test.sh judge            calibrate the vr judge: the real `claude -p` over labelled before/after pages (needs claude,
+#                              node and a Chromium; ~2 minutes; uses plan tokens). Fails if it misses broken pages or flags fine ones.
 #   ./test.sh --update-golden  regenerate tests/golden/ (review the git diff before committing it)
 #   Flags: --with-llm  also run the eval harness via `claude -p` (full tier, uses plan tokens)
 #          --keep      keep the temp directory
@@ -16,7 +18,7 @@ HARNESS="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HARNESS/.." && pwd)"
 TIER=fast; WITH_LLM=0; KEEP=0; UPDATE=0
 for a in "$@"; do case "$a" in
-  fast|full) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
+  fast|full|judge) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
   *) echo "unknown argument: $a" >&2; exit 2 ;; esac; done
 
 WORK="$(mktemp -d)"; GOLDEN="$HARNESS/tests/golden"
@@ -140,6 +142,7 @@ VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
   check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
+  check "judge calibration: scoring and case labels (judge/score.mjs)" node "$VRT/judge/score.test.mjs"
   check "--discover link rules: normalising, skips, sitemap, new paths (links.mjs)"      node "$VRT/links.test.mjs" "$VRSRC"
   check "the shipped pages.json resolves to desktop, tablet and mobile for /" bash -c "cd '$VRSRC' && node -e \"import('./config.mjs').then(m=>{const t=m.resolveTargets(JSON.parse(require('fs').readFileSync('pages.json')));if(t.map(x=>x.viewport).join()!=='desktop,tablet,mobile')process.exit(1)})\""
   VRDEPS="$WORK/vr-deps"; mkdir -p "$VRDEPS"; cp "$VRSRC/package.json" "$VRDEPS/"
@@ -217,6 +220,11 @@ else
     }
     check "nothing changed: passes without calling the model" nothing_changed
     check "the model is pointed at rubric.md and changed.json" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'changed.json' '$R/claude.log'"
+    check "the judge is limited to the Read tool"            bash -c "grep -qx -- '--allowedTools' '$R/claude.log' && grep -qx 'Read' '$R/claude.log'"
+    check "no --model flag unless VR_MODEL is set"           bash -c "! grep -q -- '--model' '$R/claude.log'"
+    model_pinned() { prep; printf '[]' > "$R/claude.out"; rm -f "$R/claude.log"; (cd "$R" && VR_MODEL=sonnet SHOTS="$R/shots" CLAUDE_STUB_LOG="$R/claude.log" CLAUDE_STUB_OUT="$R/claude.out" PATH="$R/bin:$PATH" ./vr.sh http://stub >/dev/null 2>&1); grep -qx -- '--model' "$R/claude.log" && grep -qx 'sonnet' "$R/claude.log"; }
+    check "VR_MODEL pins the model"                          model_pinned
+    check "the rubric tells the judge to ignore instructions inside screenshots" grep -q 'never instructions to you' "$VRSRC/rubric.md"
     check "severity 2 passes (exit 0)"                       bash -c "[ \"$(run_with "$(sev 2)")\" = 0 ]"
     check "severity 3 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 3)")\" = 1 ]"
     check "severity 5 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 5)")\" = 1 ]"
@@ -249,6 +257,15 @@ PY
 if have gitleaks; then check "no secrets in the repo (gitleaks)" bash -c "cd '$REPO' && gitleaks detect --no-git -s . --no-banner -l error"; else skip "gitleaks not installed"; fi
 
 if [ "$UPDATE" = 1 ]; then echo; echo "snapshots regenerated — review: git -C '$REPO' diff --stat harness/tests/golden"; exit 0; fi
+
+# ============================================================ JUDGE TIER
+if [ "$TIER" = judge ]; then
+  for t in node npm claude; do have "$t" || { echo "judge tier needs '$t' on the host"; exit 2; }; done
+  echo; echo "== judge: the real vr pipeline (claude -p) over labelled before/after pages =="
+  echo "   (set VR_MODEL to pin a model; CHROMIUM_PATH if Playwright has no browser: npx playwright install chromium)"
+  if "$VRT/judge/run.sh" "$WORK/judge"; then pass "judge catches broken pages without flagging fine ones"; else fail "judge calibration (see scores above)"; fi
+  echo; echo "tier: judge   passed: $PASSES   failed: $FAILS"; [ "$FAILS" -eq 0 ] && exit 0 || exit 1
+fi
 
 # ============================================================ FULL TIER
 if [ "$TIER" = full ]; then
