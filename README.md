@@ -332,11 +332,25 @@ The most developed of several Xdebug MCP servers, and it states this philosophy 
 
 > *"No var_dump(). No code modification. No guesswork."*
 
+It runs **inside the project's PHP container**, not on the host. `harness-init --php` bakes Xdebug (trigger-only, so it costs nothing until a trace is asked for) and the MCP into the project's own Dockerfile, so every project gets the Xdebug build that matches its own PHP version and nothing PHP-related is installed on the machine:
+
 ```bash
-composer global require koriym/xdebug-mcp
+harness-init . --php=backend --php-version 8.3 --install
 ```
 
-Requires Xdebug 3.x. Wire into `.cursor/mcp.json` like any other stdio server.
+Cursor starts it through Docker, and the entry is written for you into `.cursor/mcp.json`:
+
+```json
+"xdebug": {
+  "command": "docker",
+  "args": ["compose", "-f", "/absolute/path/to/compose.yaml", "exec", "-T", "app", "xdebug-mcp"]
+}
+```
+
+- **`-T` is mandatory.** It disables TTY allocation; with a TTY attached the stdio JSON-RPC stream is mangled and the server silently fails to handshake.
+- **Use an absolute `-f` path.** Cursor spawns the process without your shell's working directory.
+- It needs Xdebug 3.x and `ext-sockets`, both already in the generated image, and the `app` container must be running (`docker compose up -d`).
+- Traces therefore run against the project's real PHP version and its real database container, not whatever is on the host.
 
 | Tool | Gives the agent |
 |---|---|
@@ -401,7 +415,7 @@ Cursor is a VS Code fork, so Xdebug + the PHP Debug extension works normally. Ke
 
 **Trace size is the token trap.** A full PHP request trace is thousands of calls. Unscoped, you dump an enormous artifact into context — the same lesson as scoping the Playwright planner. Trace a specific entry point, never the whole request.
 
-**Security.** These are third-party MCP servers that execute code in your application's context, with your database credentials in scope. **Local dev only, never production.** Read the package before installing — this is not a category where you install the first search result.
+**Security.** These are third-party MCP servers that execute code in your application's context, with your database credentials in scope. **Local dev only, never production.** Read the package before installing — this is not a category where you install the first search result. Running the Xdebug MCP inside the project's container, as the harness does, also keeps it off your host and limits what it can see to that container's dev-only credentials.
 
 ---
 
@@ -789,7 +803,7 @@ Never fetch full logs — 30k+ lines of setup noise.
 11. First Claude Code review pass with an explicitly different model
 12. Start `.review-log.md`
 13. Eval set: `evals/harvest.sh`, curate ~12 cases, wire the monthly CI job
-14. Debug MCPs — `koriym/xdebug-mcp` for PHP; try `dlv` via shell for Go before adding `mcp-debugger`
+14. Debug MCPs — `koriym/xdebug-mcp` for PHP comes with `harness-init --php` (baked into the container, nothing to install); try `dlv` via shell for Go before adding `mcp-debugger`
 
 **Week 3 — the visual tool**
 
