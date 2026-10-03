@@ -8,10 +8,15 @@ pick them up from `~/.claude/skills/`, which holds symlinks back to this folder.
 | Skill | What it does | Overlaps with |
 |---|---|---|
 | `critique-plan` | Argues *against* a plan before implementation: failure modes, bad assumptions, unverifiable "done" conditions | nothing (Superpowers writes plans; none attack them) |
-| `review-code` | Interactive branch review, report-only. Checks the reviewer isn't the author model, enumerates every changed file, separate backend/frontend passes | `superpowers:requesting-code-review` (mine is stricter: independence check, per-file verdicts) |
-| `verify` | Runs the relevant checks and records one line of evidence each; a zero exit code is not a pass | `superpowers:verification-before-completion` (mine adds the evidence format and plan tracking) |
+| `review-code` | The final independent pre-PR review: spec compliance against the plan, architecture and quality, a verdict for every file, reads `.review-log.md`, flags if the reviewer is the author model. Report-only | `superpowers:requesting-code-review` and the per-task reviews in `subagent-driven-development` (those are the cheap, automatic inner loop; this is the outer gate) |
+| `verify` | Phase gate: scoped tests and builds, one line of evidence per check, skipped tests are not a pass, stops if anything is red or unverifiable | `superpowers:verification-before-completion` (that is the always-on rule; this is the explicit gate and report) |
 | `cleanup` | Style/cleanup pass over branch changes only, then runs just the feature's tests | nothing |
 | `harness-init` | Wraps the `harness-init` command: dry run first, then apply, never `--force` unasked | nothing (a tool wrapper, not a methodology) |
+| `dev-flow` | Navigator: reads the repo, says which dev-flow step you're on and which skill to run next and why. Read-only. The full flow and reasoning are in `dev-flow/DEV-FLOW.md` | nothing |
+
+`review-code`, `verify` and `dev-flow` set `disable-model-invocation: true`, so they only run when you type the
+slash command; the model won't pick them on its own. That keeps them from competing with the Superpowers skills
+that auto-trigger on similar situations. Both tools document this field (Claude Code and Cursor).
 
 ## Install (any machine)
 
@@ -36,7 +41,7 @@ git clone https://github.com/alex-velikanov/ai-tools.git ~/Documents/DEV/TOOLS
 
 | Asset | Source of truth | Seen by |
 |---|---|---|
-| The skills above | this folder | Claude Code (verified: its startup log reports 5 user skills) and Cursor via `~/.claude/skills` |
+| The skills above | this folder | Claude Code (verified: startup log counts the user skills) and Cursor (verified live: its skill count rose when they were linked; cold-restart behaviour is the one thing not yet confirmed) via `~/.claude/skills` |
 | Superpowers (14 skills) | a plugin, installed separately in each tool | each tool keeps its own copy: `~/.claude/plugins/cache/` and `~/.cursor/plugins/cache/`. Not in this repo |
 | Cursor built-in skills | `~/.cursor/skills-cursor/`, managed by Cursor | Cursor. Don't edit |
 | `harness/core/files/evals/review-prompt.md` | harness template | copied into each project, then tuned there. It's the prompt the evals test, not a skill |

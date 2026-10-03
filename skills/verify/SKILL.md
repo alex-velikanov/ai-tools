@@ -1,17 +1,18 @@
 ---
 name: verify
-description: Prove the work is done with concrete evidence per check, not claims.
+description: Phase-gate check — run the scoped tests and builds, record one line of evidence per check, and stop if anything fails or can't be verified. Invoke explicitly with /verify.
+disable-model-invocation: true
 ---
 
 Verify the current change. **You run every command. Do not hand verification back to me.**
 
-## Rules
+This builds on `superpowers:verification-before-completion` (no claim without fresh evidence). That rule always applies. This skill adds the gate and the report below.
 
-- Run the tests and builds relevant to **this change**, not the full suite.
-- **Read the output.** A zero exit code is not a pass.
-- A run with skipped, risky, or incomplete tests is **not** a pass. Say so.
-- If something cannot be verified automatically, say that explicitly rather than assuming it works.
-- "Should work" is not done.
+## What this adds
+
+- **Scope:** run the tests and builds for **this change**, not the full suite.
+- **Read the output.** A zero exit code is not a pass. A run with skipped, risky or incomplete tests is **not** a pass. Say so.
+- **Unverifiable things:** if something cannot be verified automatically, say that explicitly rather than assuming it works.
 
 ## Evidence
 
@@ -38,4 +39,4 @@ If working from a plan file:
 
 Do not move to the next phase until this one's scoped tests and builds pass under the rules above.
 
-If anything failed or could not be verified, say so plainly and stop. Do not proceed and mention it in passing.
+If anything failed or could not be verified, say so plainly and **stop**. Do not proceed and mention it in passing.

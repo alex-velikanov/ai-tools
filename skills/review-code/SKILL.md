@@ -1,6 +1,7 @@
 ---
 name: review-code
-description: Architectural and quality review of branch changes. Lists issues by severity without editing code.
+description: The final independent pre-PR review of a branch — spec compliance, architecture and quality, with a verdict for every changed file. Report-only. Invoke explicitly with /review-code.
+disable-model-invocation: true
 ---
 
 Review the code added or changed **on this branch**, via `git diff` against its merge base.
@@ -9,6 +10,12 @@ If you cannot produce a diff, **stop and tell me** — do not review from memory
 **Do not edit anything in this pass.** List issues; I decide what gets fixed.
 
 **Independence check.** This review is only worth running if you are *not* the model that generated this code. If you wrote it — or you are the same model that did — say so at the top of your output and recommend I re-run with a different model. Then review anyway, but flag your findings as lower-confidence.
+
+**Role in the flow.** This is the *outer gate*, run once before a PR in a fresh session. The per-task review inside subagent-driven development is `superpowers:requesting-code-review`; this one is stricter (independent model, every file accounted for).
+
+## Spec compliance
+
+Look for the approved plan or spec: `docs/superpowers/plans/`, `docs/superpowers/specs/`, or the file I name. If one exists, read it and list each requirement or task as **met / partial / missing / deviation**, citing the code that satisfies it. Flag every deviation, even a plausible one: plausible code that quietly solved a different problem is the main failure mode here. Say if a problem is with the plan itself, not the code. If no plan or spec exists, say so explicitly and continue with quality review only.
 
 ## Review log
 
