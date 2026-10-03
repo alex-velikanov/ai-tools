@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
-const { resolveTargets, DEFAULT_VIEWPORTS, fileName, slug } = await import(pathToFileURL(`${process.argv[2]}/config.mjs`));
+const { resolveTargets, DEFAULT_VIEWPORTS, DEFAULT_MAX_TILES, fileName, slug } = await import(pathToFileURL(`${process.argv[2]}/config.mjs`));
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
@@ -47,6 +47,26 @@ test('rejects bad paths, empty pages, bad viewport sizes and names', () => {
 });
 test('rejects a page listed twice', () => {
   assert.throws(() => resolveTargets(['/', '/']), /listed twice/);
+});
+test('per-page options reach the target; defaults are empty mask, no wait, 6 tiles', () => {
+  const [a, b] = resolveTargets({ pages: ['/', { path: '/x', waitFor: '.ready', mask: ['.ts', '#ad'], expectStatus: 404, maxTiles: 9 }], viewports: { d: { width: 10, height: 10 } } });
+  assert.deepEqual([a.waitFor, a.mask, a.expectStatus, a.maxTiles], [undefined, [], undefined, 6]);
+  assert.equal(DEFAULT_MAX_TILES, 6);
+  assert.deepEqual([b.waitFor, b.mask, b.expectStatus, b.maxTiles], ['.ready', ['.ts', '#ad'], 404, 9]);
+});
+test('top-level maxTiles is the default for every page, a page can override it', () => {
+  const t = resolveTargets({ maxTiles: 10, pages: ['/', { path: '/y', maxTiles: 3 }], viewports: { d: { width: 10, height: 10 } } });
+  assert.deepEqual(t.map(x => x.maxTiles), [10, 3]);
+});
+test('rejects bad per-page options', () => {
+  const bad = o => () => resolveTargets({ pages: [{ path: '/', ...o }] });
+  assert.throws(bad({ waitFor: '' }), /waitFor/);
+  assert.throws(bad({ mask: '.x' }), /mask/);
+  assert.throws(bad({ mask: [1] }), /mask/);
+  assert.throws(bad({ expectStatus: 'ok' }), /expectStatus/);
+  assert.throws(bad({ expectStatus: 99 }), /expectStatus/);
+  assert.throws(bad({ maxTiles: 0 }), /maxTiles/);
+  assert.throws(() => resolveTargets({ maxTiles: -1, pages: ['/'] }), /maxTiles/);
 });
 
 let failed = 0;
