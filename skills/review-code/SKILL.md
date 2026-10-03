@@ -10,6 +10,10 @@ If you cannot produce a diff, **stop and tell me** — do not review from memory
 
 **Independence check.** This review is only worth running if you are *not* the model that generated this code. If you wrote it — or you are the same model that did — say so at the top of your output and recommend I re-run with a different model. Then review anyway, but flag your findings as lower-confidence.
 
+## Review log
+
+If `.review-log.md` exists in the repo root, **read it before reviewing.** It lists findings I already dismissed, with reasons. Do not re-raise those. If a change makes a dismissed finding newly relevant, or you disagree with a dismissal, say so explicitly and explain why rather than silently repeating or dropping it. If the file is missing or empty, carry on.
+
 ## Coverage
 
 Start by listing every changed file. End by giving a verdict for **each one**, including "reviewed, nothing found." A file missing from that list is a gap I need to see.
