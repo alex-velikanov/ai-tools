@@ -333,7 +333,25 @@ desktop 1440×900, tablet 768×1024 and mobile 390×844 (tablet and mobile emula
 
 A plain list such as `["/", "/cart"]` still works and uses the default viewports. A page object
 can limit itself to some viewports. Screenshots are named `<viewport>__<page>__<tile>.png`, so each
-viewport has its own baseline. Then:
+viewport has its own baseline.
+
+Per-page options for content that would otherwise cause false alarms or missed pages:
+
+| Option | Effect |
+|---|---|
+| `"waitFor": ".ready"` | wait for that selector before shooting (content that loads after the network is idle) |
+| `"mask": [".timestamp", "#ad"]` | paint over those elements in every screenshot |
+| `"expectStatus": 404` | the status the page should return; by default any status of 400 or above fails the run |
+| `"maxTiles": 8` | allow a taller page. Pages need one screenshot per viewport-height, and more than 6 is an error, not a silent truncation. Set `"maxTiles"` at the top level to change it for every page |
+
+The list is the test, not a crawl: only the pages you list are compared, so a broken nav link cannot make a page
+quietly drop out of the check. To find pages you forgot, run `vr/vr.sh --discover http://localhost:5173`. It follows
+same-origin links (2 hops, 50 pages; `DISCOVER_DEPTH` and `DISCOVER_MAX` change that) and reads `/sitemap.xml`, then
+prints the paths that are not in `pages.json`, plus any broken links. It skips logout links and files, and
+`"discover": { "ignore": ["^/admin"] }` adds your own skip patterns. It changes nothing: copy over the ones that matter.
+Pages built from route parameters (`/invoices/123`) are found only if something links to them; list an example by hand.
+
+Then:
 
 ```bash
 vr/vr.sh --record https://staging.example.com   # before deploy: record the known-good build as the baseline

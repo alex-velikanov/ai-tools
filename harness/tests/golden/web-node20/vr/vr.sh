@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # vr.sh --record <base-url>   capture the known-good build as the baseline
+# vr.sh --discover <base-url> list linked and sitemap pages that are not in pages.json (changes nothing)
 # vr.sh <base-url>            capture the build under test and compare it to the baseline
 # The baseline only changes when you --record, so a bad deploy cannot become the new normal.
 set -e
 cd "$(dirname "$0")"
 
-RECORD=0
-if [ "$1" = "--record" ]; then RECORD=1; shift; fi
+RECORD=0; DISCOVER=0
+if [ "$1" = "--record" ]; then RECORD=1; shift; elif [ "$1" = "--discover" ]; then DISCOVER=1; shift; fi
 if [ -z "$1" ]; then
-  echo "usage: vr.sh [--record] <base-url>" >&2
+  echo "usage: vr.sh [--record | --discover] <base-url>" >&2
   exit 2
 fi
 URL=$1
+
+if [ "$DISCOVER" = 1 ]; then
+  BASE_URL=$URL exec node discover.mjs
+fi
 
 if [ "$RECORD" = 1 ]; then
   trap 'rm -rf baseline.new' EXIT
