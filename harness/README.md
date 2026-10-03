@@ -50,3 +50,7 @@ PHPUnit/PHPStan/`go test -race`/web build/Playwright, and eval harvesting.
 5. After ~2 weeks of real use: `./evals/harvest.sh`, curate ~12 cases (about half clean).
 
 The design rationale lives in `../README.md` (the baseline doc).
+
+## License
+
+MIT — see [LICENSE](../LICENSE).
