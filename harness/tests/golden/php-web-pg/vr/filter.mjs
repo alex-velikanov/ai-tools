@@ -23,6 +23,7 @@ const cur = fs.readdirSync('current');
 const all = [...new Set([...base, ...cur])].sort();
 const changed = [];
 const blank = [];
+const diffPct = {};   // % of pixels that differ, for screenshots of the same size (the others have no meaningful figure)
 
 for (const f of all) {
   if (!fs.existsSync(`baseline/${f}`) || !fs.existsSync(`current/${f}`)) { changed.push(f); continue; }
@@ -30,9 +31,11 @@ for (const f of all) {
   const b = PNG.sync.read(fs.readFileSync(`current/${f}`));
   if (a.width !== b.width || a.height !== b.height) { changed.push(f); if (isBlank(b) && !isBlank(a)) blank.push(f); continue; }
   const d = pixelmatch(a.data, b.data, null, a.width, a.height, { threshold: 0.1 });
+  diffPct[f] = Math.round((d / (a.width * a.height)) * 1000) / 10;
   if (d > MIN_DIFF_PX) { changed.push(f); if (isBlank(b) && !isBlank(a)) blank.push(f); }
 }
 
 fs.writeFileSync('changed.json', JSON.stringify(changed, null, 2));
 fs.writeFileSync('blank.json', JSON.stringify(blank, null, 2));
+fs.writeFileSync('diffs.json', JSON.stringify(diffPct, null, 2));
 console.log(`${changed.length} changed of ${all.length}${blank.length ? `, ${blank.length} gone blank` : ''}`);

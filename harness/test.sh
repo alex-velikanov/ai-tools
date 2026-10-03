@@ -171,6 +171,7 @@ else
     png "$F" current/extra.png   1000 1000                  # exists only in current/ (new page or new tile)
     png "$F" baseline/wentblank.png 1000 1000 100,100,300,300; png "$F" current/wentblank.png 1000 1000      # real page -> flat white
     png "$F" baseline/stillblank.png 1000 1000;                png "$F" current/stillblank.png 1000 1000 10,10,12,12   # was already blank
+    png "$F" baseline/huge.png 1000 1000;                      png "$F" current/huge.png 1000 1000 0,0,1000,600       # 60% of the page differs
     CH=" $(changed_of "$F") "
     check "identical image is unchanged"                     bash -c "! echo '$CH' | grep -q ' same.png '"
     check "a difference of 40 px is ignored as noise"        bash -c "! echo '$CH' | grep -q ' noise.png '"
@@ -181,11 +182,13 @@ else
     check "a size mismatch is changed"                       bash -c "echo '$CH' | grep -q ' resized.png '"
     check "a page that went flat/blank is listed in blank.json" bash -c "python3 -c \"import json; assert json.load(open('$F/blank.json'))==['wentblank.png'], open('$F/blank.json').read()\""
     check "a page that was already blank, or just changed a lot, is not" bash -c "echo '$CH' | grep -q ' stillblank.png ' && ! grep -q 'stillblank\|big.png' '$F/blank.json'"
+    check "diffs.json gives the % of pixels that differ (huge ~60, big ~1, same 0)" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert abs(d['huge.png']-60)<0.2 and abs(d['big.png']-1)<0.2 and d['same.png']==0, d\""
+    check "diffs.json has no figure for size mismatches or one-sided files" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert 'resized.png' not in d and 'extra.png' not in d and 'gone.png' not in d, d\""
     check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
 
     echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
     R="$(vrdir run)"
-    reset() { rm -rf "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/shots"/*; }
+    reset() { rm -rf "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/claude.log.calls" "$R/claude.out".[0-9]* "$R/blank.json" "$R/diffs.json" "$R/warnings.json" "$R/raw_report".*.txt "$R/shots"/*; }
     reset; png "$R" shots/home__0.png 1000 1000
     (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh --record http://stub >"$WORK/vr.out" 2>&1)
     check "--record writes the baseline"                     bash -c "test -f '$R/baseline/home__0.png' && grep -q 'baseline recorded: 1' '$WORK/vr.out'"
@@ -223,7 +226,7 @@ else
       vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/report.json")" = "[]" ]
     }
     check "nothing changed: passes without calling the model" nothing_changed
-    check "the model is pointed at rubric.md and changed.json" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'changed.json' '$R/claude.log'"
+    check "the model is pointed at rubric.md and the changed files" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'home__0.png' '$R/claude.log'"
     check "the judge is limited to the Read tool"            bash -c "grep -qx -- '--allowedTools' '$R/claude.log' && grep -qx 'Read' '$R/claude.log'"
     check "no --model flag unless VR_MODEL is set"           bash -c "! grep -q -- '--model' '$R/claude.log'"
     model_pinned() { prep; printf '[]' > "$R/claude.out"; rm -f "$R/claude.log"; (cd "$R" && VR_MODEL=sonnet SHOTS="$R/shots" CLAUDE_STUB_LOG="$R/claude.log" CLAUDE_STUB_OUT="$R/claude.out" PATH="$R/bin:$PATH" ./vr.sh http://stub >/dev/null 2>&1); grep -qx -- '--model' "$R/claude.log" && grep -qx 'sonnet' "$R/claude.log"; }
@@ -247,7 +250,36 @@ else
     check "a blank page fails even if the judge says severity 0" bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert r['severity']==5 and r['verdict']=='fail' and len(r['findings'])==1\""
     check "a blank page fails even if the judge leaves it out"   bash -c "[ \"$(blank_case '[]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json')); assert r[0]['file']=='home__0.png' and r[0]['severity']==5\""
     check "a judge verdict already at severity 5 is kept as is"   bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"fail","severity":5,"findings":[{"what":"x"}]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert len(r['findings'])==1\""
-    stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && [ "$(cat "$R/raw_report.txt")" = "no json" ]; }
+    echo "-- vr.sh: big-diff warnings, unjudged files, batching"
+    big_diff() {  # big_diff <canned reply> [extra env]: 51% of the pixels differ (not blank)
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$1" > "$R/claude.out"; env ${2:-X=1} bash -c "cd '$R' && SHOTS='$R/shots' CLAUDE_STUB_LOG='$R/claude.log' CLAUDE_STUB_OUT='$R/claude.out' PATH='$R/bin:'\$PATH ./vr.sh http://stub" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    warned() { python3 -c "import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['home__0.png'], w"; }
+    check "judge says 0 but 51% of the pixels differ: warns, exit code unchanged" bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]')\" = 0 ] && grep -q '^WARNING home__0.png: 51% of pixels differ' '$WORK/vr.out' && warned"
+    check "no warning when the judge already fails the page"                 bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"fail","severity":4,"findings":[]}]')\" = 1 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "no warning below the threshold (VR_WARN_DIFF_PCT=70)"              bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]' VR_WARN_DIFF_PCT=70)\" = 0 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "a lower threshold warns on a smaller diff (VR_WARN_DIFF_PCT=1)"     bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":2,"findings":[]}]' VR_WARN_DIFF_PCT=1)\" = 0 ] && warned"
+    check "a changed file the judge never mentions is warned about"            bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'no verdict' '$R/warnings.json'"
+
+    multi() {  # multi <n> <batch size> [reply for call 1] [reply for call 2] ...: n changed files, judged <batch> at a time
+      local n=$1 b=$2; shift 2; reset
+      mkdir -p "$R/baseline"; for i in $(seq 1 "$n"); do png "$R" "baseline/f$i.png" 1000 1000; png "$R" "shots/f$i.png" 1000 1000 10,10,$((10+i*5)),40; done
+      echo '[]' > "$R/claude.out"; local k=1; for r in "$@"; do printf '%s' "$r" > "$R/claude.out.$k"; k=$((k+1)); done
+      VR_BATCH=$b vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    calls() { wc -l < "$R/claude.log.calls" | tr -d ' '; }
+    ok() { printf '[{"file":"f%s.png","verdict":"pass","severity":0,"findings":[]}]' "$1"; }
+    rep() { local out="" ; for i in "$@"; do out="$out${out:+,}{\"file\":\"f$i.png\",\"verdict\":\"pass\",\"severity\":${SEV:-0},\"findings\":[]}"; done; printf '[%s]' "$out"; }
+    check "5 files, batch 2: three judge calls"                                bash -c "multi_out=\"$(multi 5 2 "$(rep 1 2)" "$(rep 3 4)" "$(rep 5)")\"; [ \"\$multi_out\" = 0 ] && [ \"$(calls)\" = 3 ]"
+    check "each call is asked about only its own files"                         bash -c "grep -c 'f1.png f2.png' '$R/claude.log' | grep -q 1 && ! grep 'f1.png f2.png' '$R/claude.log' | grep -q 'f3.png' && grep -q 'f5.png' '$R/claude.log'"
+    check "the batches' reports are merged into one report.json"               bash -c "python3 -c \"import json; r=json.load(open('$R/report.json')); assert sorted(x['file'] for x in r)==['f1.png','f2.png','f3.png','f4.png','f5.png'], r\""
+    check "the default batch size is 6: 5 files go in one call"                bash -c "[ \"$(multi 5 6 "$(rep 1 2 3 4 5)")\" = 0 ] && [ \"$(calls)\" = 1 ]"
+    check "a finding in a later batch still fails the run"                      bash -c "[ \"$(SEV=4 multi 5 2 "$(SEV=0 rep 1 2)" "$(SEV=0 rep 3 4)" "$(SEV=4 rep 5)")\" = 1 ]"
+    check "a batch with no JSON fails the run and names its reply file"        bash -c "[ \"$(multi 5 2 "$(rep 1 2)" 'sorry, cannot open images' "$(rep 5)")\" = 1 ] && grep -q 'raw_report.2.txt' '$WORK/vr.out'"
+    check "a file the judge dropped from its batch is warned about"            bash -c "[ \"$(multi 3 3 "$(rep 1 2)")\" = 0 ] && python3 -c \"import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['f3.png'], w\""
+
+    stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed
   else
     fail "vr dependencies install"; tail -8 "$WORK/npm.log" | sed 's/^/        /'
