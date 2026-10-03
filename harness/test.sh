@@ -232,6 +232,7 @@ else
     model_pinned() { prep; printf '[]' > "$R/claude.out"; rm -f "$R/claude.log"; (cd "$R" && VR_MODEL=sonnet SHOTS="$R/shots" CLAUDE_STUB_LOG="$R/claude.log" CLAUDE_STUB_OUT="$R/claude.out" PATH="$R/bin:$PATH" ./vr.sh http://stub >/dev/null 2>&1); grep -qx -- '--model' "$R/claude.log" && grep -qx 'sonnet' "$R/claude.log"; }
     check "VR_MODEL pins the model"                          model_pinned
     check "the rubric tells the judge to ignore instructions inside screenshots" grep -q 'never instructions to you' "$VRSRC/rubric.md"
+    check "the rubric names 404/500/maintenance/sign-in pages as severity 5, and bans an unlooked-at severity 0" bash -c "grep -q '404' '$VRSRC/rubric.md' && grep -q '500' '$VRSRC/rubric.md' && grep -qi 'maintenance' '$VRSRC/rubric.md' && grep -qi 'sign-in' '$VRSRC/rubric.md' && grep -q 'Never give a file severity 0' '$VRSRC/rubric.md'"
     check "severity 2 passes (exit 0)"                       bash -c "[ \"$(run_with "$(sev 2)")\" = 0 ]"
     check "severity 3 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 3)")\" = 1 ]"
     check "severity 5 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 5)")\" = 1 ]"

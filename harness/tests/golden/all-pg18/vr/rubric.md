@@ -21,6 +21,14 @@ FLAG — regressions:
   stack traces, debug output, imagery inconsistent with the page
 - Text: overflow, truncation, clipping, illegible contrast
 
+A page that now shows an error where content used to be is always severity 5, even when the layout around it
+looks tidy: 404 / "not found", 403, 500 / "internal server error", 502, 503 / "service unavailable", a maintenance or
+"we'll be right back" page, "something went wrong", a stack trace, a sign-in or access-denied screen replacing the
+page. Treat a page that went blank the same way.
+
+Open both images of every file before you answer for it. Never give a file severity 0 with no findings unless you
+looked at both pages and they match.
+
 SEVERITY:
 5 page unusable (blank, error page, total layout collapse)
 4 primary function broken (nav gone, CTA missing, form unusable)

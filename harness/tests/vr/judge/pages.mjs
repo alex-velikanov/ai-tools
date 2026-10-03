@@ -36,14 +36,19 @@ Stack trace:
   thrown in /var/www/app/src/Db.php on line 42</pre></body>`;
 
   const css = o.noCss ? '' : CSS + (o.extraCss ?? '');
-  return `<!doctype html><meta charset=utf-8><style>${css}</style><body>
-${o.nav === false ? '' : '<nav><span class="logo">Summit &amp; Co</span><a>Home</a><a>Shop</a><a>About</a><a>Cart (2)</a></nav>'}
-${o.banner ? `<div class="banner">${o.banner}</div>` : ''}
-<section class="hero"><h1>${o.headline ?? 'Gear for the long way round'}</h1>
+  // a "soft" error: the site answers 200 and keeps its nav and footer, but the content is an error or a gate
+  const content = o.softError
+    ? `<section style="padding:120px 48px;text-align:center"><h1 style="font-size:40px;margin:0 0 12px">${o.softError.title}</h1><p style="font-size:18px;color:#5b6575">${o.softError.text}</p></section>`
+    : `<section class="hero"><h1>${o.headline ?? 'Gear for the long way round'}</h1>
 <p>${o.sub ?? 'Built to last past the next summit. Free shipping on orders over $75.'}</p>
 ${o.cta === false ? '' : `<a class="cta">${o.ctaText ?? 'Shop now'}</a>`}
 ${o.injection ? `<p style="margin-top:24px;background:#fff;color:#000;padding:8px;font-size:14px">${o.injection}</p>` : ''}</section>
-<section class="grid">${products.map(card).join('')}</section>
+<section class="grid">${products.map(card).join('')}</section>`;
+
+  return `<!doctype html><meta charset=utf-8><style>${css}</style><body>
+${o.nav === false ? '' : '<nav><span class="logo">Summit &amp; Co</span><a>Home</a><a>Shop</a><a>About</a><a>Cart (2)</a></nav>'}
+${o.banner ? `<div class="banner">${o.banner}</div>` : ''}
+${content}
 ${o.footer === false ? '' : '<footer><span>Shipping</span><span>Returns</span><span>Contact</span><span>© 2026 Summit &amp; Co</span></footer>'}
 </body>`;
 }

@@ -1,7 +1,7 @@
 // Unit tests for judge/score.mjs and the calibration cases. No browser, no model. Run: node score.test.mjs
 import assert from 'node:assert/strict';
 import { score } from './score.mjs';
-import { CASES, ORDERED } from './cases.mjs';
+import { CASES, ORDERED, beforeHtml, afterHtml } from './cases.mjs';
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -45,6 +45,23 @@ test('the file order is shuffled so position does not reveal the label', () => {
   const labels = ORDERED.map(c => c.gate);
   const firstHalf = labels.slice(0, labels.length / 2).filter(Boolean).length;
   assert.ok(firstHalf > 0 && firstHalf < labels.filter(Boolean).length, 'broken cases must be in both halves');
+});
+test('every case renders HTML; only "identical" is the same before and after', () => {
+  for (const c of CASES) {
+    const b = beforeHtml(c), a = afterHtml(c);
+    assert.ok(typeof b === 'string' && b.length > 50 && typeof a === 'string' && a.length > 50, `${c.id}: no HTML`);
+    assert.ok(!/undefined|\[object Object\]|\$\{/.test(a), `${c.id}: leaked template text`);
+    if (c.id === 'identical') assert.equal(a, b); else assert.notEqual(a, b, `${c.id}: after equals before`);
+  }
+});
+test('the base page has a nav, hero, call to action, three cards and a footer; soft errors keep nav and footer', () => {
+  const base = beforeHtml({});
+  for (const part of ['<nav>', 'class="hero"', 'class="cta"', '<footer>']) assert.ok(base.includes(part), part);
+  assert.equal((base.match(/class="card"/g) ?? []).length, 3);
+  for (const id of ['soft-404', 'maintenance', 'sign-in-gate']) {
+    const html = afterHtml(CASES.find(c => c.id === id));
+    assert.ok(html.includes('<nav>') && html.includes('<footer>') && !html.includes('class="hero"'), id);
+  }
 });
 
 let failed = 0;
