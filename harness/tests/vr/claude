@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Test stand-in for the `claude` CLI: logs its arguments, prints the canned reply in $CLAUDE_STUB_OUT.
+printf '%s\n' "$@" >> "$CLAUDE_STUB_LOG"
+cat "$CLAUDE_STUB_OUT"
