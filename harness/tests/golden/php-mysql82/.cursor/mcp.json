@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "xdebug": {
+      "command": "<DOCKER>",
+      "args": [
+        "compose",
+        "-f",
+        "<ROOT>/compose.yaml",
+        "exec",
+        "-T",
+        "app",
+        "xdebug-mcp"
+      ]
+    }
+  }
+}

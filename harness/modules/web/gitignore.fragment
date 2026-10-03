@@ -1,10 +1,11 @@
-/{{WEB_DIR_PREFIX}}node_modules/
-/{{WEB_DIR_PREFIX}}dist/
-/{{WEB_DIR_PREFIX}}test-results/
-/{{WEB_DIR_PREFIX}}playwright-report/
+/e2e/node_modules/
+/e2e/test-results/
+/e2e/playwright-report/
 /vr/node_modules/
 /vr/baseline/
 /vr/current/
 /vr/changed.json
 /vr/report.json
 /vr/raw_report.txt
+/{{WEB_DIR_PREFIX}}node_modules/
+/{{WEB_DIR_PREFIX}}dist/

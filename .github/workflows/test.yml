@@ -1,0 +1,18 @@
+name: harness-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    # Golden snapshots of generated files, compose validity, error paths, the skills installer, doc links.
+    # No containers are started. The full tier (real containers) runs locally: harness/test.sh full
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: harness/test.sh fast

@@ -1,0 +1,15 @@
+  db:
+    image: postgres:{{DB_TAG}}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-app}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev}
+    volumes:
+      - db_data:{{PG_DATA_PATH}}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,13 @@
+  app:
+    build:
+      context: ./docker/php
+      args:
+        PHP_VERSION: "{{PHP_VERSION}}"
+    working_dir: /app
+    volumes:
+      - ./{{PHP_DIR}}:/app
+    # Tool container: phpunit, phpstan and the Xdebug MCP run through it. Replace the
+    # command with php-fpm or a web server when the project needs one.
+    command: ["sleep", "infinity"]
+    security_opt:
+      - no-new-privileges:true

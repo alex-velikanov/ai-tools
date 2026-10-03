@@ -1,0 +1,44 @@
+name: proj
+
+services:
+  app:
+    build:
+      context: ./docker/php
+      args:
+        PHP_VERSION: "8.2"
+    working_dir: /app
+    volumes:
+      - ./.:/app
+    # Tool container: phpunit, phpstan and the Xdebug MCP run through it. Replace the
+    # command with php-fpm or a web server when the project needs one.
+    command: ["sleep", "infinity"]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-app}
+      DB_USER: ${DB_USER:-app}
+      DB_PASSWORD: ${DB_PASSWORD:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-app}
+      MYSQL_USER: ${DB_USER:-app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-dev}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  db_data:

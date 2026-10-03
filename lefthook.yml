@@ -1,0 +1,12 @@
+# Hooks for THIS repo (the harness itself). Not the same file as harness/core/files/lefthook.yml,
+# which is the template copied into other projects.
+pre-commit:
+  commands:
+    secrets:
+      run: gitleaks protect --staged --redact --verbose
+
+pre-push:
+  commands:
+    harness-tests:
+      # ~10 seconds, starts no containers. Run `harness/test.sh full` by hand before relying on a change.
+      run: harness/test.sh fast

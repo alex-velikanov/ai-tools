@@ -1,13 +1,14 @@
 # Walkthrough: a new PHP + React app, with the harness
 
-A start-to-finish example. The app is called **shop**: a PHP backend in `backend/` and a
-React (Vite) frontend in `frontend/`. Everything marked ✅ was run on a scratch project while
-writing this; steps marked ⚠️ were not run here and are described from the docs.
+A start-to-finish example. The app is called **shop**: a PHP backend in `backend/`, a React (Vite)
+frontend in `frontend/`, and a Postgres database. PHP, Node and the database run in Docker, pinned per project.
+Everything marked ✅ was run on a scratch project while writing this; steps marked ⚠️ were not run here and are
+described from the docs.
 
-The harness gives the project: git hooks (gitleaks + Semgrep), a PHPStan config, PHPUnit
-config, Playwright config and MCP servers, an eval harness for your review prompt, a visual
-regression tool, Dependabot, and an `AGENTS.md` for agents. It never commits or pushes, and
-never overwrites a file you've edited.
+The harness gives the project: git hooks (gitleaks + Semgrep), a Docker Compose setup (PHP with Xdebug and the
+Xdebug MCP, Node, the database), PHPStan and PHPUnit config, host-side Playwright (`e2e/`) and a visual regression tool
+(`vr/`), an eval harness for your review prompt, MCP servers for Cursor, Dependabot, and an `AGENTS.md` for agents.
+It never commits or pushes, and never overwrites a file you've edited.
 
 ---
 
@@ -16,15 +17,14 @@ never overwrites a file you've edited.
 Already installed on this machine. To check on another one:
 
 ```bash
-semgrep --version && gitleaks version && lefthook version      # brew install semgrep gitleaks lefthook
-php -v && composer --version                                   # brew install php composer
-composer global config bin-dir --absolute                      # xdebug-mcp lives here
-ls "$(composer global config bin-dir --absolute)/xdebug-mcp"   # composer global require koriym/xdebug-mcp
-node -v && npm -v && claude --version && command -v harness-init
+semgrep --version && gitleaks version && lefthook version   # brew install semgrep gitleaks lefthook
+docker version && docker compose version                    # OrbStack or Docker Desktop, running
+node -v && npm -v                                           # host Node: only for e2e/ and vr/, any recent LTS
+claude --version && command -v harness-init
 ```
 
-`harness-init` prints this same check (the "Tools" block) on every run, with the install
-command for anything missing.
+You do **not** need PHP or Composer on the host. `harness-init` prints this same check (the "Tools" block) on
+every run, with the install command for anything missing.
 
 Skills are a per-machine install too, not per project (they're used from step 5 on):
 
@@ -36,29 +36,83 @@ Skills are a per-machine install too, not per project (they're used from step 5 
 
 ## 1. Create the two apps ✅
 
-The harness adds tooling around your code; it doesn't generate the app. Make the skeleton
-first (or use your existing repo and skip to step 2).
+The harness adds tooling around your code; it doesn't generate the app. With no PHP or Node on the host,
+use one-off containers (or skip this step if you already have a repo):
 
 ```bash
-mkdir -p ~/Documents/DEV/shop/backend && cd ~/Documents/DEV/shop/backend
+mkdir -p ~/Documents/DEV/shop/backend && cd ~/Documents/DEV/shop
 
-composer init --name=acme/shop --type=project --autoload=src/ --no-interaction
-composer require --dev phpunit/phpunit
-mkdir -p src tests
+# composer.json, from the official Composer image (PHP-version-independent: it only writes a file)
+docker run --rm -u "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp -v "$PWD/backend:/app" -w /app composer:2 \
+  init --name=acme/shop --type=project --autoload=src/ --no-interaction
 
-cd ..
-npm create vite@latest frontend -- --template react-ts
-cd frontend && npm install && cd ..
+# the React app, from a Node image
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/w" -w /w node:22-alpine \
+  npm create vite@latest frontend -- --template react-ts
 ```
 
-PHP tests that live in a namespace need `autoload-dev`. Add this to `backend/composer.json`
-and run `composer dump-autoload` (skip if your tests aren't namespaced):
+---
+
+## 2. Apply the harness ✅
+
+Always look before you write:
+
+```bash
+cd ~/Documents/DEV/shop
+harness-init . --php=backend --web=frontend --db postgres --dry-run
+```
+
+`--php=backend` / `--web=frontend` say *where each stack lives* (leave the value off if it's at the project root).
+`--db postgres` adds a Postgres container. Versions default to PHP 8.3 and Node 22; set them per project with
+`--php-version 8.2` and `--node-version 20`. The dry run lists every file it would create and writes nothing. Then for real:
+
+```bash
+harness-init . --php=backend --web=frontend --db postgres --install
+```
+
+`--install` is the only part that builds images and adds dependencies. It runs: `docker compose up -d --build`,
+`composer require --dev phpstan/phpstan` **inside the container**, `npm i -D @playwright/test` plus the Chromium
+browsers and `npx playwright init-agents --loop=claude` in `e2e/`, and `npm install` in `vr/`.
+Drop the flag to get just the files; the commands are printed so you can run them later.
+
+### What you now have
+
+| Path | What it is |
+|---|---|
+| `compose.yaml` | Three services: `app` (PHP tool container), `web` (Node dev server on port 5173), `db` (Postgres, healthchecked) |
+| `docker/php/Dockerfile` | PHP at the pinned version, Xdebug (trigger-only), Composer, the Xdebug MCP baked in, non-root user |
+| `lefthook.yml` | pre-commit: gitleaks on staged changes + Semgrep on staged PHP/JS/TS/Go. Semgrep retries once if it segfaults. pre-push: CodeRabbit reminder |
+| `.semgrepignore` | skips `vendor/`, `node_modules/`, `dist/`, `build/` |
+| `backend/phpstan.neon.dist`, `backend/phpunit.xml.dist` | PHPStan level 6 over `src/`; PHPUnit bootstrapped with `vendor/autoload.php`, running `tests/` |
+| `e2e/` | Playwright **on the host**, against the containerised app: config, `seed.spec.ts`, `specs/`, and the planner / generator / healer agents in `e2e/.claude/` |
+| `vr/` | visual regression tool (host): `pages.json`, `rubric.md`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
+| `.cursor/mcp.json` | `xdebug` (runs inside the `app` container via `docker compose exec -T`) and `playwright` MCP servers |
+| `evals/`, `.github/workflows/eval.yml` | eval harness for the review prompt; runs monthly and when `review-prompt.md` changes |
+| `.github/dependabot.yml` | composer (`/backend`), npm (`/frontend`), github-actions; 7-day cooldown |
+| `AGENTS.md` + `CLAUDE.md` | project facts for agents; `CLAUDE.md` is a symlink |
+| `.review-log.md`, `.gitignore` | where dismissed review findings go; harness lines appended |
+
+It also ran `git init -b main` and `lefthook install`. **Nothing is committed.**
+
+---
+
+## 3. Add some PHP, and check each piece works ✅
+
+Install PHPUnit **inside the container**, so Composer resolves it against the project's pinned PHP, not whatever is on your
+machine. (On this machine that mattered: PHPUnit resolved to `^12.5` in the PHP 8.3 container, but `^13.4` against the
+host's PHP 8.5.)
+
+```bash
+docker compose exec -T app composer require --dev phpunit/phpunit
+```
+
+Namespaced tests need `autoload-dev`. Add this to `backend/composer.json`, then `docker compose exec -T app composer dump-autoload`:
 
 ```json
 "autoload-dev": { "psr-4": { "Acme\\Shop\\Tests\\": "tests/" } }
 ```
 
-Add a first class and a test so there's something to run:
+A first class and a test so there is something to run:
 
 ```php
 // backend/src/Cart.php
@@ -96,65 +150,17 @@ final class CartTest extends TestCase
 }
 ```
 
----
-
-## 2. Apply the harness ✅
-
-Always look before you write:
+Check everything:
 
 ```bash
-cd ~/Documents/DEV/shop
-harness-init . --php=backend --web=frontend --dry-run
+docker compose exec -T app vendor/bin/phpunit                                  # OK (1 test, 1 assertion)
+docker compose exec -T app vendor/bin/phpstan analyse -c phpstan.neon.dist     # [OK] No errors
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5173/                # 200: the Vite dev server in the web container
+(cd e2e && npx playwright test)                                                # seed test passes, from the host
+docker compose exec db psql -U app app -c 'select version();'                  # Postgres is up
 ```
 
-The `--php=backend` / `--web=frontend` flags say *where each stack lives*. Leave the value off
-(`--php`) if the stack is at the project root. The dry run lists every file it would create,
-and writes nothing. Then for real:
-
-```bash
-harness-init . --php=backend --web=frontend --install
-```
-
-`--install` is the only part that adds dependencies to your project. It runs:
-`composer require --dev phpstan/phpstan` (in `backend/`), `npm i -D @playwright/test` plus the
-Chromium browsers, `npx playwright init-agents --loop=claude`, and `npm install` in `vr/`.
-Drop the flag to get just the files, and run those commands yourself later (they're printed).
-
-### What you now have
-
-| Path | What it is |
-|---|---|
-| `lefthook.yml` | pre-commit: gitleaks on staged changes + Semgrep on staged PHP/JS/TS/Go. Semgrep retries once if it segfaults. pre-push: CodeRabbit reminder |
-| `.semgrepignore` | skips `vendor/`, `node_modules/`, `dist/`, `build/` |
-| `backend/phpstan.neon.dist` | PHPStan level 6 over `src/` |
-| `backend/phpunit.xml.dist` | bootstraps `vendor/autoload.php`, runs `tests/` |
-| `frontend/playwright.config.ts` | base URL `http://localhost:5173`, auto-starts `npm run dev` |
-| `frontend/.claude/agents/`, `frontend/seed.spec.ts`, `frontend/specs/` | Playwright planner / generator / healer agents, from `init-agents` |
-| `.cursor/mcp.json` | `xdebug` (traces PHP) and `playwright` (drives a browser) MCP servers |
-| `evals/` | `harvest.sh`, `run.sh`, `review-prompt.md`, empty `cases/` |
-| `.github/workflows/eval.yml` | runs the evals monthly and when `review-prompt.md` changes |
-| `.github/dependabot.yml` | composer (`/backend`), npm (`/frontend`), github-actions; 7-day cooldown |
-| `vr/` | visual regression tool: `pages.json`, `rubric.md`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
-| `AGENTS.md` + `CLAUDE.md` | project facts for agents; `CLAUDE.md` is a symlink |
-| `.review-log.md` | where dismissed review findings get recorded |
-| `.gitignore` | harness lines appended (vendor, node_modules, vr output, ...) |
-
-It also ran `git init -b main` and `lefthook install`. **Nothing is committed.**
-
----
-
-## 3. Check each piece works ✅
-
-```bash
-cd backend
-vendor/bin/phpunit                                   # OK (1 test, 1 assertion)
-vendor/bin/phpstan analyse -c phpstan.neon.dist      # [OK] No errors
-cd ../frontend
-npx playwright test                                  # seed test passes
-cd ..
-```
-
-Prove the secret hook blocks a real-looking key. (Don't use `AKIAIOSFODNN7EXAMPLE` — it's
+Prove the secret hook blocks a real-looking key. (Don't use `AKIAIOSFODNN7EXAMPLE`: it's
 AWS's published docs placeholder and gitleaks deliberately ignores it.)
 
 ```bash
@@ -177,15 +183,10 @@ one inline with a reason, e.g. `// nosemgrep: <rule-id>` **on the same line** as
 
 ## 4. Write the real `AGENTS.md`
 
-The harness generated the **Commands** section from your stacks. The **Structure** and
+The harness generated the **Commands** section from your stacks (they all go through `docker compose`). The **Structure** and
 **Rules** sections are `TODO`, because only you know them. Fill in facts, not wishes:
 
 ```md
-# Commands
-PHP test:  cd backend && vendor/bin/phpunit
-PHP lint:  cd backend && vendor/bin/phpstan analyse -c phpstan.neon.dist
-...
-
 # Structure
 Domain logic in backend/src/Domain — no framework imports there.
 HTTP layer in backend/src/Http. No business logic in controllers.
@@ -208,6 +209,12 @@ This is the short version. The full flow, with the reason for each step and when
 [`../skills/dev-flow/DEV-FLOW.md`](../skills/dev-flow/DEV-FLOW.md); run `/dev-flow` in the project to see which
 step you're on and what to run next.
 
+Start the stack when you sit down (the Xdebug MCP needs the `app` container running):
+
+```bash
+docker compose up -d
+```
+
 The split from the baseline doc: **if you can specify it, delegate it (Claude Code); if you
 have to watch it, do it in Cursor.**
 
@@ -226,7 +233,7 @@ Xdebug MCP (Cursor) to trace one entry point:
 
 > Trace `Cart::total` using the unit test `testTotalSumsPrices`.
 
-It runs `xtrace` and returns a structured record of the call flow, with no `var_dump` and no
+It runs `xtrace` inside the container and returns a structured record of the call flow, with no `var_dump` and no
 code changes. ✅ (The tools are `xtrace`, `xstep`, `xback`, `xprofile`, `xcoverage`,
 `xcompare`.) Always trace a specific entry point, never a whole request, and use it on local
 dev only, never production.
@@ -258,13 +265,13 @@ Then `/cleanup` for a style pass over just the branch's changes.
 
 - *Questions* ("why is this blank on mobile?") → the Playwright MCP in Cursor. Ask in plain
   words; it reads the accessibility tree, not screenshots.
-- *Test suites* → the agents, in Claude Code. ⚠️ Start Claude Code from `frontend/`, since
+- *Test suites* → the agents, in Claude Code. ⚠️ Start Claude Code from `e2e/`, since
   that's where `init-agents` wrote `.claude/agents/` and `.mcp.json`. **Scope the planner
   tightly** (it is the token-heavy step):
   > Explore /checkout including validation errors and the empty-cart case. Produce a test plan.
 
   Not "explore my app". Seed your dev database small first (3 records, not 500). Review the
-  markdown in `frontend/specs/`, edit it, *then* run the generator. The healer fixes tests that
+  markdown in `e2e/specs/`, edit it, *then* run the generator. The healer fixes tests that
   broke on selectors, and tells real app bugs apart from broken tests.
 
 ---
@@ -321,7 +328,7 @@ vr/vr.sh https://staging.example.com     # after: compares against the baseline
 Unchanged pages are dropped by a pixel check first, so the model only judges pages that
 changed. It exits non-zero at severity 3 or above. Calibrate `vr/rubric.md` against about 20
 labelled before/after pairs before you trust it, and re-run them when you switch models.
-It needs a running site (locally, `npm run dev` in `frontend/`).
+It needs a running site; locally that is `docker compose up -d web`, then `vr/vr.sh http://localhost:5173`.
 
 ---
 
@@ -340,24 +347,36 @@ hour of one looping exception. Tag releases with the commit SHA in your deploy s
 When `~/Documents/DEV/TOOLS/harness` changes, re-run the same command in the project:
 
 ```bash
-harness-init . --php=backend --web=frontend
+harness-init . --php=backend --web=frontend --db postgres
 ```
 
 New files are created, files you haven't touched stay `same`, files you've edited are `SKIP`ped
 with a diff you can merge by hand. `--force` overwrites, so use it only when you mean it.
-Re-running it once on this example added `phpunit.xml.dist` and left the other 21 files alone.
+
+---
+
+## Changing a version later ⚠️ (not run here)
+
+PHP, Node and the database versions live in `compose.yaml` and `docker/php/Dockerfile`, which are yours to edit once generated.
+To move a project from PHP 8.3 to 8.4: change `PHP_VERSION` under `app.build.args` in `compose.yaml` (and the `ARG` default in the
+Dockerfile), run `docker compose build app && docker compose up -d`, then `docker compose exec -T app composer update`.
+Changing the harness flags and re-running `harness-init` won't touch these files, since they exist and differ.
 
 ---
 
 ## Gotchas seen while building this
 
-- **A bare `vendor/bin/phpunit` needs `phpunit.xml`.** The harness now ships a
-  `phpunit.xml.dist`, so the command in `AGENTS.md` is accurate.
-- **Namespaced tests need `autoload-dev`** in `composer.json` (step 1).
+- **A bare `vendor/bin/phpunit` needs `phpunit.xml`.** The harness ships a `phpunit.xml.dist`, so the command in `AGENTS.md` is accurate.
+- **Namespaced tests need `autoload-dev`** in `composer.json` (step 3).
+- **The Xdebug MCP needs `ext-sockets`.** A plain `php:*-cli` image doesn't have it; the Dockerfile adds it. The MCP is baked into the image, so it isn't a dependency of your project.
+- **The MCP must run without a TTY:** `docker compose exec -T`. Without `-T`, the JSON-RPC stream is mangled and the server silently fails to handshake. The generated `.cursor/mcp.json` already has it and uses an absolute `-f` path, because Cursor spawns the process without your shell's working directory.
+- **The `app` container must be running** for the MCP to work (`docker compose up -d`).
+- **Files created in containers are owned by you on macOS** (OrbStack maps the user). On Linux, the container user is uid 1000; if yours differs, adjust the `useradd --uid` in the Dockerfile.
+- **Postgres 18 moved its data directory**; the harness mounts the right path for the tag you choose.
 - **Semgrep's engine segfaults now and then on this machine.** The hook retries once; a real
   finding or a second crash still blocks the commit. Skip a hook deliberately with
   `LEFTHOOK_EXCLUDE=semgrep git commit ...`.
 - **GitHub Actions pinned to a tag get flagged by Semgrep.** The harness pins by commit SHA
   with the version in a comment; Dependabot keeps it current.
 - **The Xdebug and Playwright MCP servers are written to `.cursor/mcp.json`**, so they're
-  Cursor's. The Playwright *agents* are Claude Code's, via `frontend/.claude/`.
+  Cursor's. The Playwright *agents* are Claude Code's, via `e2e/.claude/`.

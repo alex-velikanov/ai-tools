@@ -1,0 +1,9 @@
+    environment:
+      DB_HOST: db
+      DB_PORT: "{{DB_PORT}}"
+      DB_NAME: ${DB_NAME:-app}
+      DB_USER: ${DB_USER:-app}
+      DB_PASSWORD: ${DB_PASSWORD:-dev}
+    depends_on:
+      db:
+        condition: service_healthy

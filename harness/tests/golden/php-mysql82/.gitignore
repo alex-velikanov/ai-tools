@@ -1,0 +1,5 @@
+# harness: eval runtime output
+/evals/cases/*/actual.json
+# harness: OS
+.DS_Store
+/vendor/

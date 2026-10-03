@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# harness-init — apply the dev harness (hooks, scanning, evals, MCP config, ...)
-# to a project directory. Safe to re-run: never overwrites existing files
-# unless --force, never touches app code, never commits.
+# harness-init — apply the dev harness (hooks, scanning, evals, MCP config, Docker runtime, ...)
+# to a project directory. Safe to re-run: never overwrites existing files unless --force,
+# never touches app code, never commits.
 set -euo pipefail
 
 # Resolve symlinks so this works when invoked via /usr/local/bin/harness-init.
@@ -12,57 +12,91 @@ usage() {
 Usage: harness-init <target-dir> [--php[=dir]] [--go[=dir]] [--web[=dir]] [options]
 
 Stacks (each takes an optional subdirectory, default "." = project root):
-  --php[=dir]   PHPStan config, Xdebug MCP, composer Dependabot entry
-  --go[=dir]    golangci config, gomod Dependabot entry
-  --web[=dir]   Playwright config + MCP, visual-fidelity tool (vr/), npm Dependabot entry
+  --php[=dir]   PHP in Docker: Dockerfile (Xdebug + Xdebug MCP baked in), PHPStan/PHPUnit config
+  --go[=dir]    Go on the host (go.mod pins the toolchain): golangci config, gomod Dependabot entry
+  --web[=dir]   Node in Docker (dev server), plus host-side e2e/ (Playwright) and vr/ (visual tool)
 
-Options:
-  --install     also run installs (phpstan, xdebug-mcp, playwright + browsers + agents, vr deps)
+Runtime options (PHP, Node and the database run in Docker Compose; there is no host mode):
+  --php-version V     PHP version for the container            (default 8.3)
+  --node-version V    Node version for the container           (default 22)
+  --db KIND[:TAG]     postgres | mysql, e.g. postgres:17       (default none; tags: postgres 16, mysql 8.4)
+
+Other options:
+  --install     also run installs (build + start containers, phpstan, Playwright, vr deps)
   --force       replace existing files that differ (default: skip and show diff)
   --dry-run     show what would happen, write nothing
   -h, --help    this help
 
-Always applied: lefthook (gitleaks + semgrep), .semgrepignore, evals/ harness,
-eval.yml, Dependabot, AGENTS.md (+ CLAUDE.md symlink), .review-log.md, .cursor/mcp.json.
+Always applied: lefthook (gitleaks + semgrep), .semgrepignore, evals/ harness, eval.yml,
+Dependabot, AGENTS.md (+ CLAUDE.md symlink), .review-log.md, .cursor/mcp.json.
 EOF
 }
 
+die() { echo "error: $*" >&2; exit 2; }
+
 TARGET=""; FORCE=0; INSTALL=0; DRY=0
 PHP=0; GO=0; WEB=0; PHP_DIR="."; GO_DIR="."; WEB_DIR="."
+PHP_VERSION="8.3"; NODE_VERSION="22"; DB_SPEC="none"
 while [ $# -gt 0 ]; do
   case "$1" in
     --php) PHP=1 ;;  --php=*) PHP=1; PHP_DIR="${1#*=}" ;;
     --go)  GO=1 ;;   --go=*)  GO=1;  GO_DIR="${1#*=}" ;;
     --web) WEB=1 ;;  --web=*) WEB=1; WEB_DIR="${1#*=}" ;;
+    --php-version)  [ $# -ge 2 ] || die "--php-version needs a value";  PHP_VERSION="$2"; shift ;;
+    --php-version=*) PHP_VERSION="${1#*=}" ;;
+    --node-version) [ $# -ge 2 ] || die "--node-version needs a value"; NODE_VERSION="$2"; shift ;;
+    --node-version=*) NODE_VERSION="${1#*=}" ;;
+    --db)           [ $# -ge 2 ] || die "--db needs a value";           DB_SPEC="$2"; shift ;;
+    --db=*) DB_SPEC="${1#*=}" ;;
     --force) FORCE=1 ;; --install) INSTALL=1 ;; --dry-run) DRY=1 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
-    *) [ -z "$TARGET" ] || { echo "only one target dir allowed" >&2; exit 2; }; TARGET="$1" ;;
+    *) [ -z "$TARGET" ] || die "only one target dir allowed"; TARGET="$1" ;;
   esac
   shift
 done
 [ -n "$TARGET" ] || { usage >&2; exit 2; }
 
+# ---- validate runtime options
+[[ "$PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]            || die "--php-version must look like 8.3 (got '$PHP_VERSION')"
+[[ "$NODE_VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]        || die "--node-version must look like 22 or 22.11 (got '$NODE_VERSION')"
+DB_KIND="${DB_SPEC%%:*}"; DB_TAG=""; [[ "$DB_SPEC" == *:* ]] && DB_TAG="${DB_SPEC#*:}"
+case "$DB_KIND" in
+  none) ;;
+  postgres) DB_TAG="${DB_TAG:-16}"; DB_PORT=5432; PHP_DB_EXT="pdo_pgsql" ;;
+  mysql)    DB_TAG="${DB_TAG:-8.4}"; DB_PORT=3306; PHP_DB_EXT="pdo_mysql" ;;
+  *) die "--db must be postgres, mysql or none (got '$DB_KIND')" ;;
+esac
+[ "$DB_KIND" = none ] && { DB_PORT=""; PHP_DB_EXT=""; }
+[ -z "$DB_TAG" ] || [[ "$DB_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || die "--db tag has odd characters: '$DB_TAG'"
+if [ "$DB_KIND" != none ] && [ "$PHP" = 0 ] && [ "$WEB" = 0 ]; then die "--db needs --php or --web (something has to use the database)"; fi
+PG_DATA_PATH="/var/lib/postgresql/data"
+if [ "$DB_KIND" = postgres ] && [[ "$DB_TAG" =~ ^[0-9]+ ]] && [ "${BASH_REMATCH[0]}" -ge 18 ]; then PG_DATA_PATH="/var/lib/postgresql"; fi
+DB_NOTE=""
+[ "$WEB" = 1 ] && DB_NOTE="$DB_NOTE, Node"
+[ "$DB_KIND" != none ] && DB_NOTE="$DB_NOTE, $DB_KIND"
+
 [ "$DRY" = 1 ] || mkdir -p "$TARGET"
 [ -d "$TARGET" ] || { echo "target does not exist (dry run): $TARGET"; TARGET="$(cd "$(dirname "$TARGET")" && pwd)/$(basename "$TARGET")"; }
 [ -d "$TARGET" ] && TARGET="$(cd "$TARGET" && pwd)"
 PROJECT_NAME="$(basename "$TARGET")"
-
-COMPOSER_BIN="$HOME/.composer/vendor/bin"
-if command -v composer >/dev/null 2>&1; then
-  COMPOSER_BIN="$(composer global config bin-dir --absolute 2>/dev/null | tail -1 || echo "$COMPOSER_BIN")"
-fi
+PROJECT_SLUG="$(printf '%s' "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^[-_]*//')"; [ -n "$PROJECT_SLUG" ] || PROJECT_SLUG="app"
+DOCKER_BIN="$(command -v docker 2>/dev/null || echo docker)"
 
 slash()  { if [ "$1" = "." ]; then echo "/"; else echo "/${1#./}"; fi; }
 prefix() { if [ "$1" = "." ]; then echo ""; else echo "${1#./}/"; fi; }
 
 render() {
-  sed -e "s|{{PROJECT_ROOT}}|$TARGET|g" -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" \
+  sed -e "s|{{PROJECT_ROOT}}|$TARGET|g" -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" -e "s|{{PROJECT_SLUG}}|$PROJECT_SLUG|g" \
       -e "s|{{PHP_DIR}}|$PHP_DIR|g" -e "s|{{GO_DIR}}|$GO_DIR|g" -e "s|{{WEB_DIR}}|$WEB_DIR|g" \
       -e "s|{{PHP_DIR_SLASH}}|$(slash "$PHP_DIR")|g" -e "s|{{GO_DIR_SLASH}}|$(slash "$GO_DIR")|g" \
       -e "s|{{WEB_DIR_SLASH}}|$(slash "$WEB_DIR")|g" \
       -e "s|{{PHP_DIR_PREFIX}}|$(prefix "$PHP_DIR")|g" -e "s|{{GO_DIR_PREFIX}}|$(prefix "$GO_DIR")|g" \
-      -e "s|{{WEB_DIR_PREFIX}}|$(prefix "$WEB_DIR")|g" -e "s|{{COMPOSER_BIN}}|$COMPOSER_BIN|g" "$@"
+      -e "s|{{WEB_DIR_PREFIX}}|$(prefix "$WEB_DIR")|g" \
+      -e "s|{{PHP_VERSION}}|$PHP_VERSION|g" -e "s|{{NODE_VERSION}}|$NODE_VERSION|g" \
+      -e "s|{{DB_KIND}}|$DB_KIND|g" -e "s|{{DB_TAG}}|$DB_TAG|g" -e "s|{{DB_PORT}}|${DB_PORT:-}|g" \
+      -e "s|{{PG_DATA_PATH}}|$PG_DATA_PATH|g" -e "s|{{PHP_DB_EXT}}|${PHP_DB_EXT:-}|g" \
+      -e "s|{{DB_NOTE}}|$DB_NOTE|g" -e "s|{{DOCKER_BIN}}|$DOCKER_BIN|g" "$@"
 }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -115,14 +149,18 @@ append_gitignore() {
   if [ "$added" -gt 0 ]; then N_MERGED=$((N_MERGED+1)); log merged ".gitignore (+$added lines)"; else N_SAME=$((N_SAME+1)); log same ".gitignore"; fi
 }
 
-echo "harness-init → $TARGET  [php=$PHP go=$GO web=$WEB force=$FORCE install=$INSTALL dry=$DRY]"
+echo "harness-init → $TARGET  [php=$PHP go=$GO web=$WEB db=$DB_KIND force=$FORCE install=$INSTALL dry=$DRY]"
+[ "$PHP" = 1 ] && echo "  php $PHP_VERSION (docker)"; [ "$WEB" = 1 ] && echo "  node $NODE_VERSION (docker)"; [ "$DB_KIND" != none ] && echo "  $DB_KIND:$DB_TAG (docker)"
 echo
 
 # ---- 1. verbatim files
 echo "Files:"
 apply_tree "$HARNESS_DIR/core/files" ""
-[ "$PHP" = 1 ] && apply_tree "$HARNESS_DIR/modules/php/files" "$(prefix "$PHP_DIR")"
-[ "$GO"  = 1 ] && apply_tree "$HARNESS_DIR/modules/go/files"  "$(prefix "$GO_DIR")"
+if [ "$PHP" = 1 ]; then
+  apply_tree "$HARNESS_DIR/modules/php/files" "$(prefix "$PHP_DIR")"
+  apply_tree "$HARNESS_DIR/modules/php/root" ""
+fi
+[ "$GO" = 1 ] && apply_tree "$HARNESS_DIR/modules/go/files" "$(prefix "$GO_DIR")"
 if [ "$WEB" = 1 ]; then
   apply_tree "$HARNESS_DIR/modules/web/files" "$(prefix "$WEB_DIR")"
   apply_tree "$HARNESS_DIR/modules/web/root" ""
@@ -138,9 +176,27 @@ put "$TMP/dependabot" ".github/dependabot.yml"
 
 { cat "$HARNESS_DIR/core/fragments/AGENTS.head.md"
   for m in $MODS; do cat "$HARNESS_DIR/modules/$m/AGENTS.commands.md"; done
-  [ -z "$MODS" ] && echo "TODO: test / lint / run commands"
+  if [ -z "$MODS" ]; then echo "TODO: test / lint / run commands"; fi
+  if [ "$DB_KIND" = postgres ]; then echo 'DB shell:  docker compose exec db psql -U app app'; fi
+  if [ "$DB_KIND" = mysql ]; then echo 'DB shell:  docker compose exec db mysql -uapp -pdev app'; fi
   cat "$HARNESS_DIR/core/fragments/AGENTS.tail.md"; } | render > "$TMP/agents"
 put "$TMP/agents" "AGENTS.md"
+
+if [ "$PHP" = 1 ] || [ "$WEB" = 1 ]; then
+  {
+    echo "name: $PROJECT_SLUG"; echo; echo "services:"
+    if [ "$PHP" = 1 ]; then
+      cat "$HARNESS_DIR/modules/php/compose.fragment.yml"
+      if [ "$DB_KIND" != none ]; then cat "$HARNESS_DIR/modules/docker/app-db.fragment.yml"; fi
+    fi
+    if [ "$WEB" = 1 ]; then cat "$HARNESS_DIR/modules/web/compose.fragment.yml"; fi
+    if [ "$DB_KIND" != none ]; then
+      cat "$HARNESS_DIR/modules/docker/db.$DB_KIND.fragment.yml"
+      printf '\nvolumes:\n  db_data:\n'
+    fi
+  } | render > "$TMP/compose"
+  put "$TMP/compose" "compose.yaml"
+fi
 
 if [ ! -e "$TARGET/CLAUDE.md" ] && [ ! -L "$TARGET/CLAUDE.md" ]; then
   [ "$DRY" = 1 ] || ln -s AGENTS.md "$TARGET/CLAUDE.md"
@@ -148,7 +204,7 @@ if [ ! -e "$TARGET/CLAUDE.md" ] && [ ! -L "$TARGET/CLAUDE.md" ]; then
 else N_SAME=$((N_SAME+1)); log same "CLAUDE.md"; fi
 
 # MCP config: merge servers into any existing .cursor/mcp.json, never replace one that exists.
-frags=""; for m in $MODS; do [ -f "$HARNESS_DIR/modules/$m/mcp.fragment.json" ] && { render "$HARNESS_DIR/modules/$m/mcp.fragment.json" > "$TMP/mcp.$m"; frags="$frags $TMP/mcp.$m"; }; done
+frags=""; for m in $MODS; do if [ -f "$HARNESS_DIR/modules/$m/mcp.fragment.json" ]; then render "$HARNESS_DIR/modules/$m/mcp.fragment.json" > "$TMP/mcp.$m"; frags="$frags $TMP/mcp.$m"; fi; done
 MCP_OUT="$(python3 - "$TARGET/.cursor/mcp.json" "$DRY" $frags <<'PY'
 import json, os, sys
 dest, dry, frags = sys.argv[1], sys.argv[2] == "1", sys.argv[3:]
@@ -187,25 +243,29 @@ echo; echo "Tools:"
 need() { if command -v "$1" >/dev/null 2>&1; then log ok "$1"; else log MISSING "$1 — $2"; fi; }
 need git "xcode-select --install"; need semgrep "brew install semgrep"; need gitleaks "brew install gitleaks"
 need lefthook "brew install lefthook"; need claude "npm i -g @anthropic-ai/claude-code (evals + vr.sh shell out to it)"
-if [ "$PHP" = 1 ]; then need php "brew install php"; need composer "brew install composer"
-  if [ -x "$COMPOSER_BIN/xdebug-mcp" ]; then log ok "xdebug-mcp"; else log MISSING "xdebug-mcp — composer global require koriym/xdebug-mcp"; fi; fi
-[ "$GO" = 1 ] && { need go "brew install go"; need golangci-lint "optional: brew install golangci-lint"; need dlv "optional: brew install delve"; }
-[ "$WEB" = 1 ] && { need node "brew install node"; need npm "ships with node"; }
+if [ "$PHP" = 1 ] || [ "$WEB" = 1 ] || [ "$DB_KIND" != none ]; then
+  need docker "install OrbStack or Docker Desktop"
+  if docker compose version >/dev/null 2>&1; then log ok "docker compose"; else log MISSING "docker compose plugin"; fi
+fi
+if [ "$WEB" = 1 ]; then need node "brew install node (host-side e2e/ and vr/ only; the app's Node runs in Docker)"; need npm "ships with node"; fi
+if [ "$GO" = 1 ]; then need go "brew install go"; need golangci-lint "optional: brew install golangci-lint"; need dlv "optional: brew install delve"; fi
 
-# ---- 5. installs (opt-in: they add dependencies to your project)
+# ---- 5. installs (opt-in: they build images and add dependencies to your project)
+DC="docker compose -f '$TARGET/compose.yaml'"
 INSTALL_CMDS=()
-if [ "$PHP" = 1 ]; then
-  [ -f "$TARGET/$PHP_DIR/composer.json" ] && INSTALL_CMDS+=("cd '$TARGET/$PHP_DIR' && composer require --dev phpstan/phpstan --no-interaction")
-  [ -x "$COMPOSER_BIN/xdebug-mcp" ] || INSTALL_CMDS+=("composer global require koriym/xdebug-mcp --no-interaction")
+if [ "$PHP" = 1 ] || [ "$WEB" = 1 ]; then INSTALL_CMDS+=("$DC up -d --build"); fi
+if [ "$PHP" = 1 ] && [ -f "$TARGET/$PHP_DIR/composer.json" ]; then
+  INSTALL_CMDS+=("$DC exec -T app composer require --dev phpstan/phpstan --no-interaction")
 fi
 if [ "$WEB" = 1 ]; then
-  [ -f "$TARGET/$WEB_DIR/package.json" ] && INSTALL_CMDS+=("cd '$TARGET/$WEB_DIR' && { npm ls @playwright/test >/dev/null 2>&1 || npm i -D @playwright/test; } && npx playwright install chromium chromium-headless-shell")
-  [ -f "$TARGET/$WEB_DIR/package.json" ] && INSTALL_CMDS+=("cd '$TARGET/$WEB_DIR' && [ -f .claude/agents/playwright-test-planner.md ] || { [ -f seed.spec.ts ] && cp seed.spec.ts \"$TMP/seed.bak\"; npx playwright init-agents --loop=claude; [ -f \"$TMP/seed.bak\" ] && cp \"$TMP/seed.bak\" seed.spec.ts; true; }")
+  INSTALL_CMDS+=("cd '$TARGET/e2e' && { npm ls @playwright/test >/dev/null 2>&1 || npm i -D @playwright/test; } && npx playwright install chromium chromium-headless-shell")
+  INSTALL_CMDS+=("cd '$TARGET/e2e' && [ -f .claude/agents/playwright-test-planner.md ] || { [ -f seed.spec.ts ] && cp seed.spec.ts \"$TMP/seed.bak\"; npx playwright init-agents --loop=claude; [ -f \"$TMP/seed.bak\" ] && cp \"$TMP/seed.bak\" seed.spec.ts; true; }")
   INSTALL_CMDS+=("cd '$TARGET/vr' && npm install")
 fi
 echo; echo "Installs:"
 if [ "${#INSTALL_CMDS[@]}" -eq 0 ]; then log none "nothing to install"
 elif [ "$INSTALL" = 1 ] && [ "$DRY" != 1 ]; then
+  if { [ "$PHP" = 1 ] || [ "$WEB" = 1 ]; } && ! docker info >/dev/null 2>&1; then echo "error: Docker is not running — start OrbStack/Docker Desktop and re-run with --install" >&2; exit 1; fi
   for c in "${INSTALL_CMDS[@]}"; do log run "$c"; bash -c "$c" >"$TMP/install.log" 2>&1 || { log FAILED "see output below"; tail -15 "$TMP/install.log"; exit 1; }; done
 else
   log pending "re-run with --install, or run by hand:"; for c in "${INSTALL_CMDS[@]}"; do echo "              $c"; done

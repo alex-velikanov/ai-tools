@@ -1,0 +1,54 @@
+name: proj
+
+services:
+  app:
+    build:
+      context: ./docker/php
+      args:
+        PHP_VERSION: "8.3"
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    # Tool container: phpunit, phpstan and the Xdebug MCP run through it. Replace the
+    # command with php-fpm or a web server when the project needs one.
+    command: ["sleep", "infinity"]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-app}
+      DB_USER: ${DB_USER:-app}
+      DB_PASSWORD: ${DB_PASSWORD:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    # Vite defaults; change the dev command for other frameworks.
+    command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci; else npm install; fi && npm run dev -- --host 0.0.0.0 --port 5173"]
+    security_opt:
+      - no-new-privileges:true
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-app}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  db_data:

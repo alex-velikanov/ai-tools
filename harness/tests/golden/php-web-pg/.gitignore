@@ -1,0 +1,16 @@
+# harness: eval runtime output
+/evals/cases/*/actual.json
+# harness: OS
+.DS_Store
+/backend/vendor/
+/e2e/node_modules/
+/e2e/test-results/
+/e2e/playwright-report/
+/vr/node_modules/
+/vr/baseline/
+/vr/current/
+/vr/changed.json
+/vr/report.json
+/vr/raw_report.txt
+/frontend/node_modules/
+/frontend/dist/

@@ -2,7 +2,7 @@ This repository contains development tools and practices that I use across diffe
 
 | What | Where |
 |---|---|
-| Bootstrap a project with the harness (hooks, secret/code scanning, evals, MCP config) | [`harness/`](harness/README.md) — the `harness-init` command |
+| Bootstrap a project with the harness (hooks, secret/code scanning, evals, MCP config, Docker runtime for PHP/Node/DB) | [`harness/`](harness/README.md) — the `harness-init` command |
 | Worked example: a new PHP + React app, step by step | [`harness/WALKTHROUGH-php-react.md`](harness/WALKTHROUGH-php-react.md) |
 | My skills for Claude Code and Cursor (single source, with installer) | [`skills/`](skills/README.md) |
 | The dev flow: which skill at which step, and why | [`skills/dev-flow/DEV-FLOW.md`](skills/dev-flow/DEV-FLOW.md) — or run `/dev-flow` |

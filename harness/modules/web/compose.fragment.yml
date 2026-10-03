@@ -1,0 +1,11 @@
+  web:
+    image: node:{{NODE_VERSION}}-alpine
+    working_dir: /app
+    volumes:
+      - ./{{WEB_DIR}}:/app
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    # Vite defaults; change the dev command for other frameworks.
+    command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci; else npm install; fi && npm run dev -- --host 0.0.0.0 --port 5173"]
+    security_opt:
+      - no-new-privileges:true

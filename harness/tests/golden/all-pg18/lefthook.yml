@@ -1,0 +1,22 @@
+pre-commit:
+  parallel: true
+  commands:
+    secrets:
+      run: gitleaks protect --staged --redact --verbose
+    semgrep:
+      glob: "*.{php,go,js,ts,tsx,jsx}"
+      # semgrep-core intermittently segfaults (exit 139) on some installs — retry once.
+      # Real findings (exit 1) and a second crash still fail the commit.
+      run: |
+        semgrep --config=auto --error --quiet {staged_files}; rc=$?
+        if [ "$rc" -eq 139 ]; then
+          echo "semgrep crashed (segfault); retrying once"
+          semgrep --config=auto --error --quiet {staged_files}; rc=$?
+        fi
+        exit "$rc"
+
+pre-push:
+  commands:
+    review:
+      run: |
+        echo "Reminder: run CodeRabbit (committed only vs main) before pushing."

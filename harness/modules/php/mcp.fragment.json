@@ -1,6 +1,6 @@
 {
   "xdebug": {
-    "command": "/bin/zsh",
-    "args": ["-c", "cd {{PROJECT_ROOT}}/{{PHP_DIR}} && exec {{COMPOSER_BIN}}/xdebug-mcp"]
+    "command": "{{DOCKER_BIN}}",
+    "args": ["compose", "-f", "{{PROJECT_ROOT}}/compose.yaml", "exec", "-T", "app", "xdebug-mcp"]
   }
 }
