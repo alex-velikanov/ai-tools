@@ -359,6 +359,13 @@ fails, and a page it passed while 50% or more of the pixels changed (`VR_WARN_DI
 entry in `warnings.json`; warnings never change the exit code. An actual HTTP 4xx/5xx stops the run at capture time, so the
 judge only has to catch pages that answer 200 but look wrong (a styled "not found", a maintenance page, a sign-in gate).
 
+**Reading a result.** Every compare run writes `vr/report/index.html`. Open it in a browser: the failed screenshots come
+first, then the ones that need a look (a warning, or no verdict from the judge), then the other changes. Each card shows
+baseline, current and a pixel diff side by side, with the judge's severity, what it says it saw, its findings, and any
+re-check or warning. The folder is self-contained (it copies the images it shows into `report/img/`), so you can zip it or
+upload it as a CI artifact; it is about 0.5 MB per changed screenshot at desktop size. The page uses no JavaScript, and
+everything the judge wrote is escaped, because the judge reads untrusted pages. A report is written whatever the verdict.
+
 Then:
 
 ```bash
