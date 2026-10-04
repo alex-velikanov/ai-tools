@@ -1,7 +1,8 @@
 // The "steps" of a page in pages.json: actions run after it loads and before it is shot (see config.mjs for the list).
 // A step that cannot run stops the whole run and says which one, so a state that can no longer be reached
 // (a button that went missing) is a failure, never a screenshot of the wrong thing.
-const TIMEOUT = Number(process.env.VR_STEP_TIMEOUT_MS ?? 10000);
+const configuredTimeout = Number(process.env.VR_STEP_TIMEOUT_MS);
+const TIMEOUT = Number.isInteger(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10000;
 
 // What a step is called in an error: never the value of a fill or select, which may be something you typed in.
 export function describeStep(step) {
