@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
-const { describeStep } = await import(pathToFileURL(`${process.argv[2]}/steps.mjs`));
+const { describeStep, stepTimeout } = await import(pathToFileURL(`${process.argv[2]}/steps.mjs`));
 const { resolveTargets, resolveAuth, envName, DEFAULT_VIEWPORTS, DEFAULT_MAX_TILES, fileName, slug } = await import(pathToFileURL(`${process.argv[2]}/config.mjs`));
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -191,6 +191,13 @@ test('steps and names work together with a login profile, and a page with steps 
   assert.deepEqual([t[0].name, t[0].auth, t[0].private, t[0].steps.length], ['orders-in', 'customer', true, 1]);
 });
 
+test('VR_STEP_TIMEOUT_MS is used only as a positive whole number of milliseconds; anything else is 10 seconds, never "no timeout"', () => {
+  for (const [value, expected] of [['1500', 1500], [' 2000 ', 2000], ['1e3', 1000], ['1', 1],
+                                   [undefined, 10000], ['', 10000], ['  ', 10000], ['0', 10000], ['-5', 10000], ['1.5', 10000],
+                                   ['abc', 10000], ['Infinity', 10000], ['NaN', 10000], ['10s', 10000]]) {
+    assert.equal(stepTimeout(value), expected, JSON.stringify(value));
+  }
+});
 test('a step is described by its action and selector, never by the value that was typed or chosen', () => {
   assert.equal(describeStep({ click: '#cart' }), 'click "#cart"');
   assert.equal(describeStep({ hover: '#menu' }), 'hover "#menu"');
