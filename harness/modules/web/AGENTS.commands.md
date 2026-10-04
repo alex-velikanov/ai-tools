@@ -4,3 +4,4 @@ Web e2e:    cd e2e && npx playwright test          # runs on the host against th
 Visual reg: vr/vr.sh --record <base-url>           # baseline the known-good build; edit vr/pages.json first
             vr/vr.sh <base-url>                    # compare to that baseline; open vr/report/index.html
             vr/vr.sh --discover <base-url>         # list linked/sitemap pages missing from pages.json (changes nothing)
+            vr/vr.sh --login <profile> [--manual] <base-url>   # pages behind a login: log in once (credentials from VR_<PROFILE>_USER/_PASSWORD)

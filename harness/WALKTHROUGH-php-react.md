@@ -342,7 +342,31 @@ Per-page options for content that would otherwise cause false alarms or missed p
 | `"waitFor": ".ready"` | wait for that selector before shooting (content that loads after the network is idle) |
 | `"mask": [".timestamp", "#ad"]` | paint over those elements in every screenshot |
 | `"expectStatus": 404` | the status the page should return; by default any status of 400 or above fails the run |
+| `"auth": "customer"` | shoot this page logged in, as that login profile (see **Pages behind a login** below) |
 | `"maxTiles": 8` | allow a taller page. Pages need one screenshot per viewport-height, and more than 6 is an error, not a silent truncation. Set `"maxTiles"` at the top level to change it for every page |
+
+**Pages behind a login.** Define a login profile at the top level of `pages.json`, then name it on the pages that need it:
+
+```json
+{ "auth": { "customer": { "loginUrl": "/login",
+                          "fields": { "#email": "$USER", "#password": "$PASSWORD" },
+                          "submit": "button[type=submit]", "loggedIn": "#account-menu" } },
+  "pages": ["/", { "path": "/orders", "auth": "customer" }] }
+```
+
+- **Log in once:** `VR_CUSTOMER_USER=... VR_CUSTOMER_PASSWORD=... vr/vr.sh --login customer <base-url>` fills the form and saves the
+  session to `vr/.auth/customer.json` (gitignored, readable only by you). Credentials are only ever read from the environment: a field
+  value must be a `$NAME` reference (`$USER` means `VR_CUSTOMER_USER`), and `pages.json` is rejected if it holds anything else.
+  For SSO, MFA or a captcha use `--manual`: a browser window opens, you log in, and the session is saved when `loggedIn` appears
+  (it needs a display, so do it on your own machine). In CI, put the session (the JSON, or a path to it) in `VR_CUSTOMER_STATE`.
+- **Sessions expire, and that is checked.** Before it shoots a logged-in page, `vr.sh` checks that the page did not redirect to the login
+  page and that the `loggedIn` selector (something on every logged-in page, such as an account menu) is there. If not, the run stops
+  with "run `vr.sh --login customer` again". Without this, a baseline of the login form compared with another login form would pass.
+- **Logged-in screenshots do not go to the judge by default.** They are compared as pixels only, and a changed one fails the run (the
+  report says it was not judged), because nothing else can vouch for it. Use a dedicated test account with fake data and `mask` for
+  anything that changes on its own. Add `"judge": true` to a profile to let the AI judge see its pages. Either way the `baseline/`,
+  `current/` and `report/` folders now hold logged-in pages: do not publish them.
+- A session is a live login. Do not commit it, paste it in a ticket, or leave it in a shared CI artifact.
 
 The list is the test, not a crawl: only the pages you list are compared, so a broken nav link cannot make a page
 quietly drop out of the check. To find pages you forgot, run `vr/vr.sh --discover http://localhost:5173`. It follows
