@@ -352,14 +352,24 @@ else
     t_report_prints_path() { run_with "$(sev 4)" >/dev/null; grep -q '^report: report/index.html' "$WORK/vr.out"; }
     t_no_report_on_record() { reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1); [ ! -e "$R/report" ] && [ ! -e "$R/diff" ]; }
     t_stale_report_removed() { prep; mkdir -p "$R/report"; echo old > "$R/report/stale.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -e "$R/report/stale.txt" ]; }
-    t_report_failure_is_not_fatal() { prep; printf '%s' "$(sev 4)" > "$R/claude.out"; printf 'import sys\nsys.exit(1)\n' > "$R/html_report.py"; vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?; cp "$VRSRC/html_report.py" "$R/html_report.py"; [ $rc = 1 ] && grep -q 'could not write the HTML report' "$WORK/vr.out"; }
+    t_report_failure_is_not_fatal() {
+      local rc4 rc0
+      printf 'import sys\nsys.exit(1)\n' > "$R/html_report.py"
+      prep; printf '%s' "$(sev 4)" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; rc4=$?
+      prep; printf '%s' "$(sev 0)" > "$R/claude.out"; vrrun "$R" >"$WORK/vr2.out" 2>&1; rc0=$?
+      cp "$VRSRC/html_report.py" "$R/html_report.py"
+      # a failing verdict still exits 1 and a passing one still exits 0, whatever the report generator did
+      [ $rc4 = 1 ] && [ $rc0 = 0 ] && grep -q 'could not write the HTML report' "$WORK/vr.out" && grep -q 'could not write the HTML report' "$WORK/vr2.out"
+    }
+    t_report_incomplete() { printf '[]' > "$R/claude.out"; prep; printf '[]' > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?; [ $rc = 0 ] && grep -q 'INCOMPLETE' "$R/report/index.html" && ! grep -q 'PASS' "$R/report/index.html"; }
     check "a failing run writes report/index.html (verdict, URL, diff image)"      t_report_on_fail
     check "a passing run writes one too"                                           t_report_on_pass
     check "a run with nothing changed writes one that says so"                     t_report_unchanged
     check "vr.sh prints where the report is"                                       t_report_prints_path
     check "--record writes no report and no diff folder"                           t_no_report_on_record
     check "a stale report/ is removed when a run dies before it can write one"     t_stale_report_removed
-    check "a report that cannot be written does not change the exit code"          t_report_failure_is_not_fatal
+    check "a report that cannot be written changes neither a failing nor a passing exit code" t_report_failure_is_not_fatal
+    check "a changed file the judge gave no verdict for makes the report INCOMPLETE, not PASS"  t_report_incomplete
 
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed

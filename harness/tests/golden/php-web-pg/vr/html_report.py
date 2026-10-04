@@ -10,12 +10,20 @@ import datetime
 import html
 import json
 import os
+import re
 import shutil
 import sys
 from urllib.parse import quote
 
 OUT = 'report'
 MAX_TEXT = 2000
+# A screenshot name is a plain file name made of word characters, dots and hyphens (viewport__page__tile.png).
+# Anything else (a path, "..", a leading dot) is never used to read or copy a file.
+SAFE_NAME = re.compile(r'^\w[\w.\-]*$')
+
+
+def safe_name(name):
+    return isinstance(name, str) and bool(SAFE_NAME.match(name)) and os.path.basename(name) == name
 
 
 def load(path, default):
@@ -55,6 +63,8 @@ def band(severity):
 def copy_images(filename):
     """Copy the images that exist for this file into report/img; return {kind: relative url}."""
     found = {}
+    if not safe_name(filename):
+        return found
     for kind in ('baseline', 'current', 'diff'):
         src = os.path.join(kind, filename)
         if os.path.isfile(src):
@@ -119,7 +129,9 @@ def card(n, filename, entry, warns, pct):
     if pct is not None:
         parts.append(f'<p class="meta">{e(pct)}% of pixels differ.</p>')
     only = ''
-    if 'baseline' not in imgs and 'current' in imgs:
+    if not safe_name(filename):
+        only = '<p class="meta">Images not shown: unsafe file name.</p>'
+    elif 'baseline' not in imgs and 'current' in imgs:
         only = '<p class="meta">Only in the current run: a new page or section.</p>'
     elif 'current' not in imgs and 'baseline' in imgs:
         only = '<p class="meta">Only in the baseline: a page or section is gone.</p>'
@@ -139,7 +151,7 @@ CSS = """
 main{max-width:1500px;margin:0 auto;padding:16px}h1{margin:0 0 4px;font-size:22px}h2{margin:28px 0 8px;font-size:17px}
 .banner{padding:12px 16px;border-radius:8px;border:2px solid var(--line);background:var(--card);margin:12px 0}
 .banner.fail{border-color:var(--fail)}.banner.pass{border-color:var(--ok)}.banner strong{font-size:18px}
-.banner.fail strong{color:var(--fail)}.banner.pass strong{color:var(--ok)}
+.banner.review{border-color:var(--warn)}.banner.fail strong{color:var(--fail)}.banner.pass strong{color:var(--ok)}.banner.review strong{color:var(--warn)}
 .card{background:var(--card);border:1px solid var(--line);border-left-width:6px;border-radius:8px;padding:12px 14px;margin:12px 0}
 .card.fail{border-left-color:var(--fail)}.card.minor{border-left-color:var(--minor)}.card.ok{border-left-color:var(--ok)}.card.none{border-left-color:var(--none)}
 .card header{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.card h3{margin:0;font-size:16px}code{color:var(--muted);font-size:12px}
@@ -156,12 +168,16 @@ details summary{cursor:pointer;margin:12px 0;font-weight:600}
 
 
 def main():
-    changed = load('changed.json', [])
+    changed = [f for f in load('changed.json', []) if isinstance(f, str)]
     report = load('report.json', [])
     has_report = os.path.exists('report.json') and isinstance(load('report.json', None), list)
     warnings = load('warnings.json', [])
     diffs = load('diffs.json', {})
-    entries = {r.get('file'): r for r in (report or []) if isinstance(r, dict)}
+    # The judge's file names are untrusted: keep only verdicts for files that were actually compared.
+    compared = set(changed)
+    entries = {r['file']: r for r in report
+               if isinstance(r, dict) and isinstance(r.get('file'), str) and r['file'] in compared}
+    ignored = len(report) - len(entries)
     warn_by_file = {}
     for w in warnings if isinstance(warnings, list) else []:
         if isinstance(w, dict):
@@ -170,16 +186,21 @@ def main():
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(OUT)
 
-    files = sorted(set(changed) | set(entries), key=lambda f: (-sev_of(entries[f]) if f in entries else 0, f))
+    files = sorted(compared, key=lambda f: (-sev_of(entries[f]) if f in entries else 0, f))
     failed = [f for f in files if f in entries and sev_of(entries[f]) >= 3]
     look = [f for f in files if f not in failed and (f in warn_by_file or f not in entries)]
     other = [f for f in files if f not in failed and f not in look]
 
+    unjudged = [f for f in files if f not in entries]
     if not has_report:
         banner = '<div class="banner"><strong>No report</strong> The run stopped before the judge\'s verdicts were merged. See raw_report.txt.</div>'
     elif failed:
         worst = max(sev_of(entries[f]) for f in failed)
-        banner = f'<div class="banner fail"><strong>FAIL</strong> {len(failed)} of {len(files)} changed screenshots at severity 3 or above (worst: {worst}).</div>'
+        more = f' {len(unjudged)} have no verdict from the judge.' if unjudged else ''
+        banner = f'<div class="banner fail"><strong>FAIL</strong> {len(failed)} of {len(files)} changed screenshots at severity 3 or above (worst: {worst}).{more}</div>'
+    elif unjudged:
+        banner = (f'<div class="banner review"><strong>INCOMPLETE</strong> {len(unjudged)} of {len(files)} changed screenshots '
+                  'have no verdict from the judge, so this run cannot be called a pass.</div>')
     elif files:
         banner = f'<div class="banner pass"><strong>PASS</strong> {len(files)} changed screenshots, none at severity 3 or above.</div>'
     else:
@@ -199,6 +220,7 @@ def main():
     url = os.environ.get('VR_REPORT_URL', '')
     body = (f'<h1>Visual regression report</h1><p class="meta">{e(when)}' + (f' · {e(url)}' if url else '') + '</p>'
             + banner
+            + (f'<p class="meta">Ignored {ignored} judge entries for files that were not compared.</p>' if ignored and has_report else '')
             + section('Failed', failed)
             + section('Needs a look', look)
             + section('Other changes', other, wrap_details=True))

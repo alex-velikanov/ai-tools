@@ -66,6 +66,7 @@ class ReportTests(unittest.TestCase):
         page = self.run_report()
         self.assertIn('FAIL', page)
         self.assertIn('2 of 7 changed screenshots at severity 3 or above (worst: 5)', page)
+        self.assertIn('2 have no verdict from the judge', page)
         i_fail, i_look, i_other = page.index('Failed (2)'), page.index('Needs a look ('), page.index('Other changes (')
         self.assertLess(i_fail, i_look)
         self.assertLess(i_look, i_other)
@@ -110,9 +111,11 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn('<script', low)
         self.assertNotIn('<img src=x', low)
         self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;', page)
-        self.assertEqual(low.count('<img '), 6)                  # only the report's own images: 3 per file
-        self.assertIn('img/current/a%22b__x__0.png', page)       # the quote in a file name cannot end the attribute
+        self.assertEqual(low.count('<img '), 3)                  # only the report's own images: 3 for the safe file
+        self.assertIn('a&quot;b__x__0.png', page)                # an unsafe name is shown escaped ...
+        self.assertNotIn('a%22b', page)                          # ... but never used as an image path
         self.assertNotIn('src="img/current/a"b', page)
+        self.assertIn('unsafe file name', page)
 
     def test_long_text_is_cut(self):
         self.images('desktop__home__0.png')
@@ -166,6 +169,65 @@ class ReportTests(unittest.TestCase):
         page = self.run_report()
         self.assertIn('PASS', page)
         self.assertNotIn('Failed (', page)
+
+    def test_file_names_from_the_judge_cannot_reach_files_outside_the_screenshot_folders(self):
+        outer = self.root / 'outer'
+        work = outer / 'vr'
+        work.mkdir(parents=True)
+        (outer / 'secret.txt').write_text('TOP SECRET')
+        (outer / 'x.png').write_text('TOP SECRET')
+        for kind in ('baseline', 'current', 'diff'):
+            write_png(work / kind / 'desktop__home__0.png')
+        (work / 'changed.json').write_text(json.dumps(['desktop__home__0.png']))
+        (work / 'report.json').write_text(json.dumps([
+            {'file': 'desktop__home__0.png', 'severity': 4, 'seen': 's', 'findings': []},
+            {'file': '../../x.png', 'severity': 5, 'seen': 's', 'findings': []},          # not a compared file
+            {'file': '/etc/passwd', 'severity': 5, 'findings': []},
+            {'file': ['a'], 'severity': 5, 'findings': []},
+        ]))
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=work, capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        page = (work / 'report' / 'index.html').read_text()
+        copied = [p.name for p in (work / 'report').rglob('*') if p.is_file()]
+        self.assertEqual(sorted(copied), ['desktop__home__0.png'] * 3 + ['index.html'])
+        self.assertNotIn('TOP SECRET', ''.join(p.read_text(errors='ignore') for p in (work / 'report').rglob('*') if p.is_file() and p.suffix != '.png'))
+        self.assertNotIn('x.png', page)
+        self.assertIn('Ignored 3 judge entries for files that were not compared', page)
+        self.assertEqual(page.count('class="card'), 1)              # one card: the severity of the ignored entries is not counted
+
+    def test_a_changed_file_name_that_is_not_a_plain_file_name_is_never_copied(self):
+        outer = self.root / 'outer'
+        work = outer / 'vr'
+        work.mkdir(parents=True)
+        (outer / 'x.png').write_text('TOP SECRET')
+        for name in ['../../x.png', '/etc/hostname', '.hidden__a__0.png', 'a/b__c__0.png', '..']:
+            (work / 'changed.json').write_text(json.dumps([name]))
+            (work / 'report.json').write_text('[]')
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+            r = subprocess.run([sys.executable, str(SCRIPT)], cwd=work, capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual([p.name for p in (work / 'report').rglob('*') if p.is_file()], ['index.html'], name)
+
+    def test_changed_files_without_a_verdict_are_never_called_a_pass(self):
+        for f in ['desktop__a__0.png', 'desktop__b__0.png']:
+            self.images(f)
+        self.put('changed.json', ['desktop__a__0.png', 'desktop__b__0.png'])
+        self.put('report.json', [])                                    # the judge said nothing about either
+        page = self.run_report()
+        self.assertIn('INCOMPLETE', page)
+        self.assertIn('2 of 2 changed screenshots have no verdict from the judge', page)
+        self.assertNotIn('PASS', page)
+        self.put('report.json', [{'file': 'desktop__a__0.png', 'severity': 0, 'seen': 's', 'findings': []}])   # one of two
+        page = self.run_report()
+        self.assertIn('INCOMPLETE', page)
+        self.assertIn('1 of 2 changed screenshots have no verdict', page)
+        self.assertNotIn('PASS', page)
+        self.put('report.json', [{'file': 'desktop__a__0.png', 'severity': 0, 'seen': 's', 'findings': []},
+                                 {'file': 'desktop__b__0.png', 'severity': 2, 'seen': 's', 'findings': []}])  # both judged
+        page = self.run_report()
+        self.assertIn('PASS', page)
+        self.assertNotIn('INCOMPLETE', page)
 
 
 if __name__ == '__main__':
