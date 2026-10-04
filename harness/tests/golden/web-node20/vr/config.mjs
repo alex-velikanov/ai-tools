@@ -63,6 +63,9 @@ export function resolveTargets(raw) {
       throw new Error(`page path must be a string starting with "/": ${JSON.stringify(page)}`);
     }
     checkOptions(p);
+    if (p.viewports !== undefined && (!Array.isArray(p.viewports) || p.viewports.length === 0)) {
+      throw new Error(`page "${p.path}": viewports must be a non-empty array`);
+    }
     for (const name of p.viewports ?? names) {
       if (!viewports[name]) throw new Error(`page "${p.path}" uses unknown viewport "${name}" (known: ${names.join(', ')})`);
       const key = `${name}__${slug(p.path)}`;

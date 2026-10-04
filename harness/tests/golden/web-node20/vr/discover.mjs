@@ -7,7 +7,7 @@ import fs from 'fs';
 import { resolveTargets } from './config.mjs';
 import { normalizeLink, shouldSkip, parseSitemap, newPaths } from './links.mjs';
 
-const base = process.env.BASE_URL;
+const base = process.env.BASE_URL.replace(/\/+$/, '');
 const maxDepth = Number(process.env.DISCOVER_DEPTH ?? 2);
 const maxPages = Number(process.env.DISCOVER_MAX ?? 50);
 const raw = JSON.parse(fs.readFileSync(new URL('./pages.json', import.meta.url)));

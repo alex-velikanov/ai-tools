@@ -40,7 +40,7 @@ for (const name of new Set(targets.map(t => t.viewport))) {
     for (let i = 0; i < tiles; i++) {
       await page.evaluate(y => window.scrollTo(0, y), i * height);
       await page.waitForTimeout(300);
-      await page.screenshot({ path: `${out}/${fileName(t, i)}`, mask });
+      await page.screenshot({ path: `${out}/${fileName(t, i)}`, mask, animations: 'disabled' });
     }
   }
   await ctx.close();

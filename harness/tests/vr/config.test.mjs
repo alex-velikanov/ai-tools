@@ -35,6 +35,12 @@ test('file names carry viewport, page and tile, and never collide across viewpor
   assert.ok(names.includes('mobile__home__0.png') && names.includes('tablet__a_b__0.png'));
   assert.equal(slug('/'), 'home');
 });
+test('rejects empty and non-array page viewport selections', () => {
+  for (const viewports of [[], null, 'desktop', {}, 1, false]) {
+    assert.throws(() => resolveTargets({ pages: [{ path: '/', viewports }] }), /viewports must be a non-empty array/);
+  }
+  assert.equal(resolveTargets({ pages: [{ path: '/' }] }).length, 3);
+});
 test('rejects unknown viewport names, naming the known ones', () => {
   assert.throws(() => resolveTargets({ pages: [{ path: '/', viewports: ['watch'] }] }), /unknown viewport "watch".*desktop, tablet, mobile/);
 });

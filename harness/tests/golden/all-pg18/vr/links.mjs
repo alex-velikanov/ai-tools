@@ -11,14 +11,15 @@ export function normalizeLink(href, baseUrl, pageUrl = baseUrl) {
   try { u = new URL(href, pageUrl); } catch { return null; }
   const base = new URL(baseUrl);
   if (!/^https?:$/.test(u.protocol) || u.origin !== base.origin) return null;
-  const prefix = base.pathname.replace(/\/$/, '');
+  const prefix = base.pathname.replace(/\/+$/, '');
   if (prefix && u.pathname !== prefix && !u.pathname.startsWith(prefix + '/')) return null;
-  const path = u.pathname.slice(prefix.length).replace(/\/+$/, '') || '/';
-  return path;
+  const path = u.pathname.slice(prefix.length) || '/';
+  return path + u.search;
 }
 
 export function shouldSkip(path, extraIgnore = []) {
-  return DEFAULT_IGNORE.some(r => r.test(path)) || extraIgnore.some(p => new RegExp(p).test(path));
+  const pathname = path.split(/[?#]/, 1)[0];
+  return DEFAULT_IGNORE.some(r => r.test(pathname)) || extraIgnore.some(p => new RegExp(p).test(path));
 }
 
 // <loc> entries of a sitemap.xml. A sitemap index (entries ending in .xml) yields nothing: list those pages by hand.

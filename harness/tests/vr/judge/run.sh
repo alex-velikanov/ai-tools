@@ -11,7 +11,7 @@ fi
 cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,rubric.md,pages.json} "$W/vr/"; cp "$HERE/../stub-shoot.mjs" "$W/vr/shoot.mjs"
 cp "$HERE"/{pages,cases,make-pairs,score}.mjs "$W/vr/"; ln -sfn "$W/node_modules" "$W/vr/node_modules"
 cd "$W/vr"
-rm -rf baseline current shots/* changed.json report.json raw_report.txt
+rm -rf baseline current shots/* changed.json blank.json diffs.json report.json warnings.json raw_report.txt raw_report.*.txt
 node make-pairs.mjs baseline shots
 SHOTS="$W/vr/shots" ./vr.sh http://stub || true     # exit 1 is expected: the broken pages fail the gate
 node score.mjs . "${@:2}"

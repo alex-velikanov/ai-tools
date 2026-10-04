@@ -6,6 +6,9 @@ import fs from 'fs';
 // MIN_DIFF_PX pixels differ. An absolute pixel count (not a % of the image) so a small but
 // real change, like a missing button, is not lost on a tall page.
 const MIN_DIFF_PX = Number(process.env.VR_MIN_DIFF_PX ?? 50);
+if (!Number.isFinite(MIN_DIFF_PX) || MIN_DIFF_PX < 0) {
+  throw new Error('VR_MIN_DIFF_PX must be finite and non-negative');
+}
 
 // A screenshot that is (almost) one flat colour where the baseline was not is a blank page: the judge is not
 // trusted with that alone, because it has been seen to skim past it. vr.sh forces these to severity 5.
@@ -32,7 +35,9 @@ for (const f of all) {
   if (a.width !== b.width || a.height !== b.height) { changed.push(f); if (isBlank(b) && !isBlank(a)) blank.push(f); continue; }
   const d = pixelmatch(a.data, b.data, null, a.width, a.height, { threshold: 0.1 });
   diffPct[f] = Math.round((d / (a.width * a.height)) * 1000) / 10;
-  if (d > MIN_DIFF_PX) { changed.push(f); if (isBlank(b) && !isBlank(a)) blank.push(f); }
+  const wentBlank = isBlank(b) && !isBlank(a);
+  if (wentBlank) blank.push(f);
+  if (wentBlank || d > MIN_DIFF_PX) changed.push(f);
 }
 
 fs.writeFileSync('changed.json', JSON.stringify(changed, null, 2));

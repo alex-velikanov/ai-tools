@@ -47,6 +47,13 @@ def load(path, default=None):
         return default
 
 
+def severity(record):
+    try:
+        return int(record.get('severity', 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def merge():
     report = []
     for path in numbered('raw_report.*.txt', r'\.(\d+)\.txt$'):
@@ -59,6 +66,7 @@ def merge():
         report += part
     by_file = {}
     for r in report:
+        r['severity'] = severity(r)
         by_file.setdefault(r.get('file'), r)
     report = list(by_file.values())
 
@@ -121,7 +129,7 @@ def final():
             warnings.append({'file': f, 'warning': f"The independent re-check returned nothing usable ({s['reason']})."})
             continue
         first = by_file.get(f)
-        sev2 = second.get('severity', 0) or 0
+        second['severity'] = sev2 = severity(second)
         if first is None:
             first = {'file': f, 'verdict': second.get('verdict', 'pass'), 'severity': sev2, 'findings': []}
             report.append(first)

@@ -41,7 +41,7 @@ boot() { local dir="$1"; shift; "$HARNESS/bootstrap.sh" "$dir" "$@" >"$WORK/boot
 
 # ============================================================ FAST TIER
 echo "== fast: syntax =="
-for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/harvest.sh" "$HARNESS/modules/web/root/vr/vr.sh"; do
+for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/harvest.sh" "$HARNESS/modules/web/root/vr/vr.sh" "$HARNESS/tests/vr/judge/run.sh"; do
   check "bash -n ${f#$REPO/}" bash -n "$f"
 done
 if have node; then
@@ -139,6 +139,7 @@ PY
 
 echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stubbed) =="
 VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
+check "judge severity normalization in merge and re-check" python3 "$VRT/report.test.py" "$VRSRC"
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
   check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
@@ -185,6 +186,17 @@ else
     check "diffs.json gives the % of pixels that differ (huge ~60, big ~1, same 0)" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert abs(d['huge.png']-60)<0.2 and abs(d['big.png']-1)<0.2 and d['same.png']==0, d\""
     check "diffs.json has no figure for size mismatches or one-sided files" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert 'resized.png' not in d and 'extra.png' not in d and 'gone.png' not in d, d\""
     check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
+
+    invalid_threshold() {
+      local value
+      for value in nonsense NaN Infinity -Infinity -1; do
+        if (cd "$F" && VR_MIN_DIFF_PX="$value" node filter.mjs >"$WORK/filter.out" 2>&1); then return 1; fi
+        grep -q 'VR_MIN_DIFF_PX must be finite and non-negative' "$WORK/filter.out" || return 1
+      done
+    }
+    check "invalid pixel thresholds fail with a clear error" invalid_threshold
+    check "zero is a valid pixel threshold" bash -c "cd '$F' && VR_MIN_DIFF_PX=0 node filter.mjs >/dev/null && grep -q noise.png changed.json"
+    check "blank pages bypass even a threshold above the whole image size" bash -c "cd '$F' && VR_MIN_DIFF_PX=1000001 node filter.mjs >/dev/null && python3 -c \"import json; assert 'wentblank.png' in json.load(open('changed.json')); assert json.load(open('blank.json'))==['wentblank.png']; assert 'big.png' not in json.load(open('changed.json'))\""
 
     echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
     R="$(vrdir run)"
