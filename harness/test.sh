@@ -389,7 +389,7 @@ else
 
     echo "-- vr.sh: pages behind a login stay away from the judge"
     # pages.json with a login profile; the stub shoot.mjs copies whatever PNGs are in shots/, so the file names decide what is "private"
-    write_pages() { printf '%s' "{\"viewports\":{\"desktop\":{\"width\":1000,\"height\":1000}},\"auth\":{\"customer\":{\"loginUrl\":\"/login\",\"fields\":{\"#e\":\"\$USER\"},\"loggedIn\":\"#m\"${2:-}}},\"pages\":$1}" > "$R/pages.json"; }
+    write_pages() { printf '%s' "{\"viewports\":{\"desktop\":{\"width\":1000,\"height\":1000}},\"auth\":{\"customer\":{\"loginUrl\":\"/login\",\"fields\":{\"#e\":\"\$USER\"},\"loggedIn\":\"#m\"${2:-,\"judge\":false}}},\"pages\":$1}" > "$R/pages.json"; }
     private_prep() {  # a baseline of two pages ("/orders" behind a login, "/shop" public); the build under test changes both
       reset; mkdir -p "$R/baseline"
       png "$R" baseline/desktop__orders__0.png 1000 1000; png "$R" baseline/desktop__shop__0.png 1000 1000
@@ -417,6 +417,12 @@ else
       write_pages '[{"path":"/orders","auth":"customer"}]'
       vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/private.json")" = "[]" ]
     }
+    t_default_sends() {
+      private_prep; rm -f "$R/baseline/desktop__shop__0.png" "$R/shots/desktop__shop__0.png"; write_pages '[{"path":"/orders","auth":"customer"}]' ' '
+      printf '[{"file":"desktop__orders__0.png","verdict":"fail","severity":4,"seen":"orders","findings":[]}]' > "$R/claude.out"
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 1 ] && grep -q 'desktop__orders__0.png' "$R/claude.log" && [ "$(cat "$R/private.json")" = "[]" ]
+    }
     t_judge_true_sends() {
       private_prep; rm -f "$R/baseline/desktop__shop__0.png" "$R/shots/desktop__shop__0.png"; write_pages '[{"path":"/orders","auth":"customer"}]' ',"judge":true'
       printf '[{"file":"desktop__orders__0.png","verdict":"pass","severity":1,"seen":"orders","findings":[]}]' > "$R/claude.out"
@@ -432,6 +438,7 @@ else
     check "a page behind a login is never named to the judge; public pages still are" t_private_not_named_to_judge
     check "only private pages changed: no judge call at all, the run fails and the report says why" t_private_only_no_judge
     check "an unchanged private page passes without the judge"                      t_private_unchanged_passes
+    check "a page behind a login goes to the judge like any other (the default), and its verdict decides" t_default_sends
     check "a profile with \"judge\": true sends its pages to the judge"             t_judge_true_sends
     check "a stale private.json is cleared at the start of a run"                   t_stale_private_removed
     t_login_usage() {
