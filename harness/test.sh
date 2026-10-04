@@ -140,6 +140,8 @@ PY
 echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stubbed) =="
 VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
 check "judge severity normalization in merge and re-check" python3 "$VRT/report.test.py" "$VRSRC"
+check "html_report.py: sections, images, escaping, odd input, re-runs" python3 "$VRT/html_report.test.py" "$VRSRC"
+for f in report.py html_report.py; do check "python syntax: $f" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$VRSRC/$f"; done
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
   check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
@@ -153,7 +155,7 @@ else
 
     vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
       local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
-      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,html_report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
       cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
       echo "$d"
     }
@@ -187,6 +189,14 @@ else
     check "diffs.json has no figure for size mismatches or one-sided files" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert 'resized.png' not in d and 'extra.png' not in d and 'gone.png' not in d, d\""
     check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
 
+    pngdims() { python3 -c "import struct,sys; d=open(sys.argv[1],'rb').read(); assert d[:8]==b'\\x89PNG\\r\\n\\x1a\\n'; print(*struct.unpack('>II', d[16:24]))" "$1"; }
+    red_pixels() { (cd "$F" && node -e "const {PNG}=require('pngjs'); const p=PNG.sync.read(require('fs').readFileSync('diff/'+process.argv[1])); let n=0; for(let i=0;i<p.data.length;i+=4) if(p.data[i]===255&&p.data[i+1]===0&&p.data[i+2]===0) n++; console.log(n)" "$1"); }
+    mkdir -p "$F/diff"; echo stale > "$F/diff/stale.png"; (cd "$F" && node filter.mjs >/dev/null)
+    check "diff/ holds a valid PNG of the same size for each changed same-size pair" bash -c "[ \"\$($(declare -f pngdims) ; pngdims '$F/diff/big.png')\" = '1000 1000' ] && [ \"\$($(declare -f pngdims) ; pngdims '$F/diff/huge.png')\" = '1000 1000' ]"
+    check "the diff image marks the differing pixels (big: about 10,000)" bash -c "n=\$($(declare -f red_pixels); F='$F'; red_pixels big.png); [ \"\$n\" -gt 5000 ] && [ \"\$n\" -lt 15000 ]"
+    check "no diff image for unchanged, noise-level, resized or one-sided files" bash -c "cd '$F/diff' && [ ! -e same.png ] && [ ! -e noise.png ] && [ ! -e resized.png ] && [ ! -e gone.png ] && [ ! -e extra.png ]"
+    check "diff/ is rebuilt on every run (stale files are removed)" test ! -e "$F/diff/stale.png"
+
     invalid_threshold() {
       local value
       for value in nonsense NaN Infinity -Infinity -1; do
@@ -200,7 +210,7 @@ else
 
     echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
     R="$(vrdir run)"
-    reset() { rm -rf "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/claude.log.calls" "$R/claude.out".[0-9]* "$R/blank.json" "$R/diffs.json" "$R/warnings.json" "$R/raw_report".*.txt "$R/shots"/*; }
+    reset() { rm -rf "$R/diff" "$R/report" "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/claude.log.calls" "$R/claude.out".[0-9]* "$R/blank.json" "$R/diffs.json" "$R/warnings.json" "$R/raw_report".*.txt "$R/shots"/*; }
     reset; png "$R" shots/home__0.png 1000 1000
     (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh --record http://stub >"$WORK/vr.out" 2>&1)
     check "--record writes the baseline"                     bash -c "test -f '$R/baseline/home__0.png' && grep -q 'baseline recorded: 1' '$WORK/vr.out'"
@@ -322,9 +332,9 @@ else
     check "no description: re-checked, and a higher second severity fails the run" t_recheck_raises
     check "the re-check prompt is for one file and asks for an independent look"  t_recheck_prompt
     t_unreadable_first() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity'] is None and r['severity_raw']=='high', r"; }
-    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d"; }
+    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d" && json report.json "assert d[0]['judge_incomplete'] is True, d" && grep -q 'INCOMPLETE' "$R/report/index.html" && ! grep -q 'PASS' "$R/report/index.html"; }
     check "an unreadable severity (\"high\") is re-judged, not taken as 0"        t_unreadable_first
-    check "an unreadable severity with no usable re-check is warned about"        t_unreadable_unusable
+    check "an unreadable severity with no usable re-check is warned about and the report says INCOMPLETE" t_unreadable_unusable
     check "a second opinion never lowers a severity"                              t_never_lowers
     check "an unusable re-check keeps the first verdict and warns"                t_bad_recheck
     check "an unusable re-check does not hide a first-pass failure"               t_bad_recheck_keeps_fail
@@ -334,6 +344,32 @@ else
     check "a file the judge left out is re-checked"                               t_missing_rechecked
     check "undescribed verdicts for 3 files: 3 re-checks (1 batch call + 3)"      t_rechecked_all_when_under_cap
     check "VR_RECHECK_MAX caps the re-checks and warns about the rest"            t_cap
+
+    echo "-- vr.sh: the HTML report"
+    t_report_on_fail()  { [ "$(run_with "$(sev 4)")" = 1 ] && [ -f "$R/report/index.html" ] && grep -q 'home__0.png' "$R/report/index.html" && grep -q 'FAIL' "$R/report/index.html" && grep -q 'http://stub' "$R/report/index.html" && [ -f "$R/report/img/diff/home__0.png" ]; }
+    t_report_on_pass()  { [ "$(run_with "$(sev 0)")" = 0 ] && grep -q 'PASS' "$R/report/index.html"; }
+    t_report_unchanged() { nothing_changed >/dev/null; grep -q 'Nothing changed' "$R/report/index.html"; }
+    t_report_prints_path() { run_with "$(sev 4)" >/dev/null; grep -q '^report: report/index.html' "$WORK/vr.out"; }
+    t_no_report_on_record() { reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1); [ ! -e "$R/report" ] && [ ! -e "$R/diff" ]; }
+    t_stale_report_removed() { prep; mkdir -p "$R/report"; echo old > "$R/report/stale.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -e "$R/report/stale.txt" ]; }
+    t_report_failure_is_not_fatal() {
+      local rc4 rc0
+      printf 'import sys\nsys.exit(1)\n' > "$R/html_report.py"
+      prep; printf '%s' "$(sev 4)" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; rc4=$?
+      prep; printf '%s' "$(sev 0)" > "$R/claude.out"; vrrun "$R" >"$WORK/vr2.out" 2>&1; rc0=$?
+      cp "$VRSRC/html_report.py" "$R/html_report.py"
+      # a failing verdict still exits 1 and a passing one still exits 0, whatever the report generator did
+      [ $rc4 = 1 ] && [ $rc0 = 0 ] && grep -q 'could not write the HTML report' "$WORK/vr.out" && grep -q 'could not write the HTML report' "$WORK/vr2.out"
+    }
+    t_report_incomplete() { printf '[]' > "$R/claude.out"; prep; printf '[]' > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?; [ $rc = 0 ] && grep -q 'INCOMPLETE' "$R/report/index.html" && ! grep -q 'PASS' "$R/report/index.html"; }
+    check "a failing run writes report/index.html (verdict, URL, diff image)"      t_report_on_fail
+    check "a passing run writes one too"                                           t_report_on_pass
+    check "a run with nothing changed writes one that says so"                     t_report_unchanged
+    check "vr.sh prints where the report is"                                       t_report_prints_path
+    check "--record writes no report and no diff folder"                           t_no_report_on_record
+    check "a stale report/ is removed when a run dies before it can write one"     t_stale_report_removed
+    check "a report that cannot be written changes neither a failing nor a passing exit code" t_report_failure_is_not_fatal
+    check "a changed file the judge gave no verdict for makes the report INCOMPLETE, not PASS"  t_report_incomplete
 
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed
