@@ -1,7 +1,7 @@
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
 import fs from 'fs';
-import { resolveTargets, slug } from './config.mjs';
+import { resolveTargets } from './config.mjs';
 
 // A screenshot is "changed" if it exists on only one side, its size differs, or more than
 // MIN_DIFF_PX pixels differ. An absolute pixel count (not a % of the image) so a small but
@@ -26,7 +26,7 @@ function isBlank(png) {
 // model. vr.sh leaves them out of the judge's list and report.py fails the run if one of them changed.
 const privateTargets = resolveTargets(JSON.parse(fs.readFileSync(new URL('./pages.json', import.meta.url)))).filter(t => t.private);
 const isPrivate = f => privateTargets.some(t => {
-  const prefix = `${t.viewport}__${slug(t.path)}__`;
+  const prefix = `${t.viewport}__${t.name}__`;
   return f.startsWith(prefix) && /^\d+\.png$/.test(f.slice(prefix.length));
 });
 
