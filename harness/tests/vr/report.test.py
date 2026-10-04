@@ -105,6 +105,41 @@ class SeverityTests(unittest.TestCase):
                 self.run_report('final', int(expected >= 3))
                 self.assertEqual(self.read('report.json')[0]['severity'], expected)
 
+    def test_judge_incomplete_says_whether_a_file_ended_with_a_usable_verdict(self):
+        good = {'file': 'page', 'severity': 2, 'seen': 'a page', 'findings': []}
+        bad = {'file': 'page', 'severity': 'high', 'seen': 'a page', 'findings': []}
+        cases = [   # (name, first reply, re-check reply or None, blank?, expected judge_incomplete)
+            ('readable, never re-checked', good, None, False, False),
+            ('unreadable, no re-check', bad, None, False, True),
+            ('unreadable, re-check unusable', bad, 'no json', False, True),
+            ('unreadable, re-check unreadable too', bad, [{'file': 'page', 'severity': 'critical'}], False, True),
+            ('unreadable, re-check readable', bad, [{'file': 'page', 'severity': 1, 'seen': 's'}], False, False),
+            ('readable, re-check unreadable', good, [{'file': 'page', 'severity': 'x'}], False, False),
+            ('unreadable but the page went blank', bad, None, True, False),
+            ('no verdict, re-check readable', None, [{'file': 'page', 'severity': 0, 'seen': 's'}], False, False),
+            ('no verdict, re-check unreadable', None, [{'file': 'page', 'severity': 'x'}], False, True),
+            ('no verdict, no re-check', None, 'no json', False, None),     # no entry at all
+        ]
+        for name, first, second, blank, expected in cases:
+            with self.subTest(name):
+                self.write('raw_report.1.txt', [first] if first else [])
+                self.write('changed.json', ['page'])
+                self.write('blank.json', ['page'] if blank else [])
+                self.write('diffs.json', {})
+                self.run_report('merge')
+                if second is not None:
+                    self.write('recheck.1.txt', second)
+                    if isinstance(second, str):
+                        (self.root / 'recheck.1.txt').write_text(second)
+                elif (self.root / 'recheck.1.txt').exists():
+                    (self.root / 'recheck.1.txt').unlink()
+                self.run_report('final', 1 if blank else 0)
+                entries = self.read('report.json')
+                if expected is None:
+                    self.assertEqual(entries, [])
+                else:
+                    self.assertEqual(entries[0].get('judge_incomplete'), expected, entries)
+
     def test_readable_severities_are_not_suspects(self):
         for value in [0, 2, 3, 5, '4', 2.9, 0.0]:
             with self.subTest(value=value):

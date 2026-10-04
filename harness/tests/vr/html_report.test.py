@@ -66,7 +66,7 @@ class ReportTests(unittest.TestCase):
         page = self.run_report()
         self.assertIn('FAIL', page)
         self.assertIn('2 of 7 changed screenshots at severity 3 or above (worst: 5)', page)
-        self.assertIn('2 have no verdict from the judge', page)
+        self.assertIn('2 have no usable verdict from the judge', page)
         i_fail, i_look, i_other = page.index('Failed (2)'), page.index('Needs a look ('), page.index('Other changes (')
         self.assertLess(i_fail, i_look)
         self.assertLess(i_look, i_other)
@@ -78,7 +78,7 @@ class ReportTests(unittest.TestCase):
         for f in ['desktop__home__1.png', 'desktop__nov__0.png', 'mobile__gone__0.png']:   # a warning, or no verdict
             self.assertIn(f, look_part)
         self.assertIn('60% of pixels differ but the judge gave severity 0.', look_part)
-        self.assertIn('No verdict', look_part)
+        self.assertIn('No usable verdict', look_part)
         other_part = page[i_other:]
         self.assertIn('tablet__new__0.png', other_part)
         self.assertIn('desktop__size__0.png', other_part)
@@ -202,12 +202,16 @@ class ReportTests(unittest.TestCase):
         work.mkdir(parents=True)
         (outer / 'x.png').write_text('TOP SECRET')
         for name in ['../../x.png', '/etc/hostname', '.hidden__a__0.png', 'a/b__c__0.png', '..']:
+            if name in ('.hidden__a__0.png', 'a/b__c__0.png'):          # real images exist: only the name check can stop them
+                for kind in ('baseline', 'current', 'diff'):
+                    write_png(work / kind / name)
             (work / 'changed.json').write_text(json.dumps([name]))
             (work / 'report.json').write_text('[]')
             env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
             r = subprocess.run([sys.executable, str(SCRIPT)], cwd=work, capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertEqual([p.name for p in (work / 'report').rglob('*') if p.is_file()], ['index.html'], name)
+            self.assertNotIn('img/', (work / 'report' / 'index.html').read_text(), name)
 
     def test_changed_files_without_a_verdict_are_never_called_a_pass(self):
         for f in ['desktop__a__0.png', 'desktop__b__0.png']:
@@ -216,18 +220,38 @@ class ReportTests(unittest.TestCase):
         self.put('report.json', [])                                    # the judge said nothing about either
         page = self.run_report()
         self.assertIn('INCOMPLETE', page)
-        self.assertIn('2 of 2 changed screenshots have no verdict from the judge', page)
+        self.assertIn('2 of 2 changed screenshots have no usable verdict from the judge', page)
         self.assertNotIn('PASS', page)
         self.put('report.json', [{'file': 'desktop__a__0.png', 'severity': 0, 'seen': 's', 'findings': []}])   # one of two
         page = self.run_report()
         self.assertIn('INCOMPLETE', page)
-        self.assertIn('1 of 2 changed screenshots have no verdict', page)
+        self.assertIn('1 of 2 changed screenshots have no usable verdict', page)
         self.assertNotIn('PASS', page)
         self.put('report.json', [{'file': 'desktop__a__0.png', 'severity': 0, 'seen': 's', 'findings': []},
                                  {'file': 'desktop__b__0.png', 'severity': 2, 'seen': 's', 'findings': []}])  # both judged
         page = self.run_report()
         self.assertIn('PASS', page)
         self.assertNotIn('INCOMPLETE', page)
+
+    def test_a_verdict_the_judge_could_not_complete_is_not_a_verdict(self):
+        for f in ['desktop__a__0.png', 'desktop__b__0.png']:
+            self.images(f)
+        self.put('changed.json', ['desktop__a__0.png', 'desktop__b__0.png'])
+        self.put('report.json', [
+            {'file': 'desktop__a__0.png', 'severity': 0, 'seen': 's', 'findings': [], 'severity_raw': 'high', 'judge_incomplete': True},
+            {'file': 'desktop__b__0.png', 'severity': 1, 'seen': 's', 'findings': [], 'judge_incomplete': False},
+        ])
+        page = self.run_report()
+        self.assertIn('INCOMPLETE', page)
+        self.assertIn('1 of 2 changed screenshots have no usable verdict', page)
+        self.assertNotIn('PASS', page)
+        self.assertIn('No usable verdict', page)
+        self.assertLess(page.index('desktop__a__0.png'), page.index('Other changes ('))      # it is in "Needs a look"
+        self.put('report.json', [
+            {'file': 'desktop__a__0.png', 'severity': 1, 'seen': 's', 'findings': [], 'severity_raw': 'high', 'judge_incomplete': False},
+            {'file': 'desktop__b__0.png', 'severity': 1, 'seen': 's', 'findings': [], 'judge_incomplete': False},
+        ])
+        self.assertIn('PASS', self.run_report())             # a usable re-check completed it
 
 
 if __name__ == '__main__':

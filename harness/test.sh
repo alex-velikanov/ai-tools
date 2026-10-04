@@ -332,9 +332,9 @@ else
     check "no description: re-checked, and a higher second severity fails the run" t_recheck_raises
     check "the re-check prompt is for one file and asks for an independent look"  t_recheck_prompt
     t_unreadable_first() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity'] is None and r['severity_raw']=='high', r"; }
-    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d"; }
+    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d" && json report.json "assert d[0]['judge_incomplete'] is True, d" && grep -q 'INCOMPLETE' "$R/report/index.html" && ! grep -q 'PASS' "$R/report/index.html"; }
     check "an unreadable severity (\"high\") is re-judged, not taken as 0"        t_unreadable_first
-    check "an unreadable severity with no usable re-check is warned about"        t_unreadable_unusable
+    check "an unreadable severity with no usable re-check is warned about and the report says INCOMPLETE" t_unreadable_unusable
     check "a second opinion never lowers a severity"                              t_never_lowers
     check "an unusable re-check keeps the first verdict and warns"                t_bad_recheck
     check "an unusable re-check does not hide a first-pass failure"               t_bad_recheck_keeps_fail

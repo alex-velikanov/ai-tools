@@ -41,6 +41,11 @@ def e(value):
     return html.escape(str(value)[:MAX_TEXT], quote=True)
 
 
+def usable(entry):
+    """True if the judge gave this file a verdict that can be relied on (not missing, not an unreadable severity)."""
+    return bool(entry) and not entry.get('judge_incomplete')
+
+
 def sev_of(entry):
     try:
         return int(entry.get('severity', 0))
@@ -100,9 +105,10 @@ def findings_html(findings):
 def card(n, filename, entry, warns, pct):
     imgs = copy_images(filename)
     sev = sev_of(entry) if entry else None
-    badge = (f'<span class="badge {band(sev)}">Severity {sev}</span>' if entry
-             else '<span class="badge none">No verdict</span>')
-    parts = [f'<article class="card {band(sev) if entry else "none"}" id="f{n}">',
+    ok = usable(entry)
+    badge = (f'<span class="badge {band(sev)}">Severity {sev}</span>' if ok
+             else '<span class="badge none">No usable verdict</span>')
+    parts = [f'<article class="card {band(sev) if ok else "none"}" id="f{n}">',
              f'<header>{badge}<h3>{e(label(filename))}</h3><code>{e(filename)}</code></header>']
     if entry:
         verdict = entry.get('verdict', '')
@@ -122,8 +128,9 @@ def card(n, filename, entry, warns, pct):
             notes.append(f'Forced to severity 5 because the page went blank ({e(said)}).')
         for note in notes:
             parts.append(f'<p class="meta">{note}</p>')
-    else:
-        parts.append('<p class="meta">The judge returned no verdict for this file.</p>')
+    if not ok:
+        parts.append('<p class="meta">The judge returned no usable verdict for this file'
+                     + (' (its severity could not be read and the re-check did not settle it).' if entry else '.') + '</p>')
     if warns:
         parts.append('<ul class="warn">' + ''.join(f'<li>{e(w)}</li>' for w in warns) + '</ul>')
     if pct is not None:
@@ -188,19 +195,19 @@ def main():
 
     files = sorted(compared, key=lambda f: (-sev_of(entries[f]) if f in entries else 0, f))
     failed = [f for f in files if f in entries and sev_of(entries[f]) >= 3]
-    look = [f for f in files if f not in failed and (f in warn_by_file or f not in entries)]
+    look = [f for f in files if f not in failed and (f in warn_by_file or not usable(entries.get(f)))]
     other = [f for f in files if f not in failed and f not in look]
 
-    unjudged = [f for f in files if f not in entries]
+    unjudged = [f for f in files if not usable(entries.get(f))]
     if not has_report:
         banner = '<div class="banner"><strong>No report</strong> The run stopped before the judge\'s verdicts were merged. See raw_report.txt.</div>'
     elif failed:
         worst = max(sev_of(entries[f]) for f in failed)
-        more = f' {len(unjudged)} have no verdict from the judge.' if unjudged else ''
+        more = f' {len(unjudged)} have no usable verdict from the judge.' if unjudged else ''
         banner = f'<div class="banner fail"><strong>FAIL</strong> {len(failed)} of {len(files)} changed screenshots at severity 3 or above (worst: {worst}).{more}</div>'
     elif unjudged:
         banner = (f'<div class="banner review"><strong>INCOMPLETE</strong> {len(unjudged)} of {len(files)} changed screenshots '
-                  'have no verdict from the judge, so this run cannot be called a pass.</div>')
+                  'have no usable verdict from the judge, so this run cannot be called a pass.</div>')
     elif files:
         banner = f'<div class="banner pass"><strong>PASS</strong> {len(files)} changed screenshots, none at severity 3 or above.</div>'
     else:
