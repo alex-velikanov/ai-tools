@@ -44,7 +44,8 @@ if [ "$(tr -d ' \n' < changed.json)" = "[]" ]; then
 fi
 
 # Pass 1: the judge gets a few screenshot pairs per call (VR_BATCH, default 6), because on long lists it has been seen
-# to skim past obviously broken pages. Read-only: it may open files but not run anything. VR_MODEL pins the model.
+# to skim past obviously broken pages. --tools Read leaves the judge no tool but Read (--allowedTools would only pre-approve
+# it), so text inside a screenshot cannot make it run anything. VR_MODEL pins the model.
 BATCH=${VR_BATCH:-6}
 mkdir judge.tmp
 node -e "console.log(require('./changed.json').join('\n'))" | split -l "$BATCH" - judge.tmp/files_
@@ -59,7 +60,7 @@ JSON array as [{file, verdict, severity, seen, findings}] to stdout — no prose
 no markdown fences. seen is one short sentence saying what the current page \
 shows; write it before you decide the severity. A file present in only one of \
 the two folders means a page or section was added or removed: report it." \
-    --allowedTools Read ${VR_MODEL:+--model "$VR_MODEL"} > "raw_report.$n.txt"
+    --tools Read ${VR_MODEL:+--model "$VR_MODEL"} > "raw_report.$n.txt"
   { echo "--- batch $n: $list"; cat "raw_report.$n.txt"; } >> raw_report.txt
 done
 rm -rf judge.tmp
@@ -74,7 +75,7 @@ for file in $(python3 report.py suspects); do
 Look at both images closely; this is an independent second look. Print ONLY a JSON array with one object \
 [{file, verdict, severity, seen, findings}] — no prose, no markdown fences. seen is one short sentence \
 saying what the current page shows." \
-    --allowedTools Read ${VR_MODEL:+--model "$VR_MODEL"} > "recheck.$n.txt"
+    --tools Read ${VR_MODEL:+--model "$VR_MODEL"} > "recheck.$n.txt"
 done
 
 # Final report: the blank-page guard and warnings (see report.py) are applied here. Exit 1 at severity 3 or above.

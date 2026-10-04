@@ -239,7 +239,8 @@ else
     }
     check "nothing changed: passes without calling the model" nothing_changed
     check "the model is pointed at rubric.md and the changed files" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'home__0.png' '$R/claude.log'"
-    check "the judge is limited to the Read tool"            bash -c "grep -qx -- '--allowedTools' '$R/claude.log' && grep -qx 'Read' '$R/claude.log'"
+    check "the judge's only tool is Read (--tools, not just a pre-approval)" bash -c "grep -qx -- '--tools' '$R/claude.log' && grep -qx 'Read' '$R/claude.log' && ! grep -q -- '--allowedTools' '$R/claude.log'"
+    check "every claude call in vr.sh uses --tools Read, none --allowedTools" bash -c "code=\$(grep -v '^ *#' '$VRSRC/vr.sh'); [ \"\$(echo \"\$code\" | grep -c -- '--tools Read')\" = 2 ] && ! echo \"\$code\" | grep -q -- '--allowedTools'"
     check "no --model flag unless VR_MODEL is set"           bash -c "! grep -q -- '--model' '$R/claude.log'"
     model_pinned() { prep; printf '[]' > "$R/claude.out"; rm -f "$R/claude.log"; (cd "$R" && VR_MODEL=sonnet SHOTS="$R/shots" CLAUDE_STUB_LOG="$R/claude.log" CLAUDE_STUB_OUT="$R/claude.out" PATH="$R/bin:$PATH" ./vr.sh http://stub >/dev/null 2>&1); grep -qx -- '--model' "$R/claude.log" && grep -qx 'sonnet' "$R/claude.log"; }
     check "VR_MODEL pins the model"                          model_pinned
@@ -320,6 +321,10 @@ else
     check "a described, passed page with a small diff is not re-checked"        t_no_recheck
     check "no description: re-checked, and a higher second severity fails the run" t_recheck_raises
     check "the re-check prompt is for one file and asks for an independent look"  t_recheck_prompt
+    t_unreadable_first() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity'] is None and r['severity_raw']=='high', r"; }
+    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d"; }
+    check "an unreadable severity (\"high\") is re-judged, not taken as 0"        t_unreadable_first
+    check "an unreadable severity with no usable re-check is warned about"        t_unreadable_unusable
     check "a second opinion never lowers a severity"                              t_never_lowers
     check "an unusable re-check keeps the first verdict and warns"                t_bad_recheck
     check "an unusable re-check does not hide a first-pass failure"               t_bad_recheck_keeps_fail

@@ -17,6 +17,11 @@ export function normalizeLink(href, baseUrl, pageUrl = baseUrl) {
   return path + u.search;
 }
 
+// base + path, without a doubled slash when the base URL ends in one.
+export function joinUrl(base, path) {
+  return base.replace(/\/+$/, '') + path;
+}
+
 export function shouldSkip(path, extraIgnore = []) {
   const pathname = path.split(/[?#]/, 1)[0];
   return DEFAULT_IGNORE.some(r => r.test(pathname)) || extraIgnore.some(p => new RegExp(p).test(path));

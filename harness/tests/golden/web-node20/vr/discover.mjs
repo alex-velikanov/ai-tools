@@ -5,9 +5,9 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import { resolveTargets } from './config.mjs';
-import { normalizeLink, shouldSkip, parseSitemap, newPaths } from './links.mjs';
+import { normalizeLink, shouldSkip, parseSitemap, newPaths, joinUrl } from './links.mjs';
 
-const base = process.env.BASE_URL.replace(/\/+$/, '');
+const base = process.env.BASE_URL.replace(/\/+$/, '');   // links are normalised against it, so no trailing slash
 const maxDepth = Number(process.env.DISCOVER_DEPTH ?? 2);
 const maxPages = Number(process.env.DISCOVER_MAX ?? 50);
 const raw = JSON.parse(fs.readFileSync(new URL('./pages.json', import.meta.url)));
@@ -28,12 +28,15 @@ try {
 const queue = [...depthOf.keys()];
 const visited = new Set();
 const broken = [];
+const redirected = [];
 while (queue.length && visited.size < maxPages) {
   const path = queue.shift();
   if (visited.has(path)) continue;
   visited.add(path);
-  const res = await page.goto(base + path, { waitUntil: 'networkidle' }).catch(() => null);
+  const res = await page.goto(joinUrl(base, path), { waitUntil: 'networkidle' }).catch(() => null);
   if (!res || res.status() >= 400) { broken.push(`${path} (${res ? res.status() : 'no response'}) linked from ${linkedFrom.get(path) ?? 'pages.json'}`); continue; }
+  // a page that redirects outside the site (other origin, or outside the base path) is not a page of the site: drop it
+  if (!normalizeLink(page.url(), base)) { depthOf.delete(path); redirected.push(`${path} -> ${page.url()}`); continue; }
   if (depthOf.get(path) >= maxDepth) continue;
   const hrefs = await page.$$eval('a[href]', as => as.map(a => a.getAttribute('href')));
   for (const h of hrefs) {
@@ -51,3 +54,4 @@ for (const p of fresh) console.log(p);
 console.error(`${visited.size} pages visited, ${fresh.length} not in pages.json${fresh.length ? ' (listed above)' : ''}`);
 if (queue.length) console.error(`stopped at DISCOVER_MAX=${maxPages}; ${queue.length} more to visit. Raise DISCOVER_MAX or lower DISCOVER_DEPTH.`);
 for (const b of broken) console.error(`broken link: ${b}`);
+for (const r of redirected) console.error(`left out, redirects off the site: ${r}`);

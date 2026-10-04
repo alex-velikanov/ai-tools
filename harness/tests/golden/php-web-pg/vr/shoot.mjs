@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import { resolveTargets, fileName } from './config.mjs';
+import { joinUrl } from './links.mjs';
 
 const base  = process.env.BASE_URL;
 const out   = process.env.OUT;
@@ -22,7 +23,7 @@ for (const name of new Set(targets.map(t => t.viewport))) {
 
   for (const t of group) {
     const where = `${t.path} [${t.viewport}]`;
-    const res = await page.goto(base + t.path, { waitUntil: 'networkidle' });
+    const res = await page.goto(joinUrl(base, t.path), { waitUntil: 'networkidle' });
     const status = res ? res.status() : 0;
     if (t.expectStatus ? status !== t.expectStatus : status === 0 || status >= 400) {
       throw new Error(`${where} returned HTTP ${status || '(no response)'}${t.expectStatus ? `, expected ${t.expectStatus}` : ''}`);

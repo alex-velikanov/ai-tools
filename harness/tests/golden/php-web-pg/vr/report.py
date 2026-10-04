@@ -54,6 +54,17 @@ def severity(record):
         return 0
 
 
+def severity_ok(record):
+    """True if the judge's severity is a number from 0 to 5 (a numeric string is fine). Anything else, or none, is unreadable."""
+    value = record.get('severity')
+    if isinstance(value, bool):
+        return False
+    try:
+        return 0 <= float(value) <= 5
+    except (TypeError, ValueError):
+        return False
+
+
 def merge():
     report = []
     for path in numbered('raw_report.*.txt', r'\.(\d+)\.txt$'):
@@ -66,7 +77,11 @@ def merge():
         report += part
     by_file = {}
     for r in report:
-        r['severity'] = severity(r)
+        if not severity_ok(r):
+            r['severity_raw'] = r.get('severity')   # kept for the report; the file is re-judged below
+            r['severity'] = 0
+        else:
+            r['severity'] = severity(r)
         by_file.setdefault(r.get('file'), r)
     report = list(by_file.values())
 
@@ -94,6 +109,8 @@ def merge():
         sev = (r or {}).get('severity', 0) or 0
         if r is None:
             reason = 'the judge returned no verdict'
+        elif 'severity_raw' in r:
+            reason = f"the judge gave an unreadable severity ({json.dumps(r['severity_raw'])})"
         elif not (isinstance(r.get('seen'), str) and r['seen'].strip()):
             reason = 'the judge did not say what it saw'
         elif sev < 3 and diffs.get(f, 0) >= recheck_pct:
@@ -129,14 +146,18 @@ def final():
             warnings.append({'file': f, 'warning': f"The independent re-check returned nothing usable ({s['reason']})."})
             continue
         first = by_file.get(f)
-        second['severity'] = sev2 = severity(second)
+        if severity_ok(second):
+            second['severity'] = sev2 = severity(second)
+        else:
+            warnings.append({'file': f, 'warning': f"The re-check gave an unreadable severity ({json.dumps(second.get('severity'))}); it was ignored."})
+            second['severity'] = sev2 = 0
         if first is None:
             first = {'file': f, 'verdict': second.get('verdict', 'pass'), 'severity': sev2, 'findings': []}
             report.append(first)
             by_file[f] = first
             first['first_severity'] = None
         else:
-            first['first_severity'] = first.get('severity', 0)
+            first['first_severity'] = None if 'severity_raw' in first else first.get('severity', 0)
         first['rechecked'] = s['reason']
         if sev2 > (first.get('severity', 0) or 0):
             first['severity'], first['verdict'] = sev2, second.get('verdict', 'fail')

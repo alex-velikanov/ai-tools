@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
-const { normalizeLink, shouldSkip, parseSitemap, newPaths } = await import(pathToFileURL(`${process.argv[2]}/links.mjs`));
+const { normalizeLink, shouldSkip, parseSitemap, newPaths, joinUrl } = await import(pathToFileURL(`${process.argv[2]}/links.mjs`));
 const B = 'https://shop.example.com';
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -50,6 +50,18 @@ test('sitemap: <loc> entries become paths, off-site and nested sitemaps are drop
 test('newPaths: only what is not already listed, de-duplicated and sorted', () => {
   assert.deepEqual(newPaths(['/b', '/a', '/b', '/c'], ['/c']), ['/a', '/b']);
   assert.deepEqual(newPaths([], ['/']), []);
+});
+test('joinUrl: never doubles the slash between a base URL and a path', () => {
+  assert.equal(joinUrl('https://shop.example.com', '/pricing'), 'https://shop.example.com/pricing');
+  assert.equal(joinUrl('https://shop.example.com/', '/pricing'), 'https://shop.example.com/pricing');
+  assert.equal(joinUrl('https://shop.example.com///', '/'), 'https://shop.example.com/');
+  assert.equal(joinUrl('https://shop.example.com/app/', '/pricing?x=1'), 'https://shop.example.com/app/pricing?x=1');
+});
+test('a redirect target outside the site (other origin, or outside the base path) is out of scope', () => {
+  assert.equal(normalizeLink('https://other.example.com/landing', B), null);
+  assert.equal(normalizeLink('https://shop.example.com/login', `${B}/app`), null);
+  assert.equal(normalizeLink('https://shop.example.com/app/new-home', `${B}/app`), '/new-home');
+  assert.equal(normalizeLink('https://shop.example.com/elsewhere', B), '/elsewhere');
 });
 
 let failed = 0;
