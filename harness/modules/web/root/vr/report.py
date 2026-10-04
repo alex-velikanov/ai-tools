@@ -70,6 +70,10 @@ def severity(record):
 
 
 def merge():
+    try:
+        os.remove('judge_errors.json')
+    except FileNotFoundError:
+        pass
     report = []
     errors = []
     for path in numbered('raw_report.*.txt', r'\.(\d+)\.txt$'):

@@ -167,6 +167,9 @@ class SeverityTests(unittest.TestCase):
         self.assertFalse((self.root / 'first.json').exists())       # nothing is judged, so nothing is merged
 
     def test_readable_replies_leave_no_judge_errors(self):
+        (self.root / 'raw_report.1.txt').write_text('No usable reply')
+        self.run_report('merge', expected=1)
+        self.assertTrue((self.root / 'judge_errors.json').exists())
         self.write('raw_report.1.txt', [{'file': 'a', 'severity': 0, 'seen': 'page'}])
         self.write('changed.json', ['a'])
         self.run_report('merge')
