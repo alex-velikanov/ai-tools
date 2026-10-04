@@ -6,6 +6,10 @@
 #                              (pixel filter, baseline rotation, report parsing and exit code), doc links.
 #   ./test.sh full             fast tier + real containers: the demo app end to end, and two projects with
 #                              different PHP / Node / database versions running side by side.
+#   ./test.sh browser          the vr scripts in a real headless Chromium against a tiny local site: screenshot sizes and tiles,
+#                              HTTP errors, tile limit, waitFor, mask, animations, --discover, and vr.sh end to end (stub
+#                              judge, no model). Needs node and a Chromium (set VR_CHROMIUM, or npx playwright install
+#                              chromium); skips itself with a message if there is none. ~90 seconds.
 #   ./test.sh judge            calibrate the vr judge: the real `claude -p` over labelled before/after pages (needs claude,
 #                              node and a Chromium; ~2 minutes; uses plan tokens). Fails if it misses broken pages or flags fine ones.
 #   ./test.sh --update-golden  regenerate tests/golden/ (review the git diff before committing it)
@@ -18,7 +22,7 @@ HARNESS="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HARNESS/.." && pwd)"
 TIER=fast; WITH_LLM=0; KEEP=0; UPDATE=0
 for a in "$@"; do case "$a" in
-  fast|full|judge) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
+  fast|full|judge|browser) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
   *) echo "unknown argument: $a" >&2; exit 2 ;; esac; done
 
 WORK="$(mktemp -d)"; GOLDEN="$HARNESS/tests/golden"
@@ -45,7 +49,7 @@ for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$
   check "bash -n ${f#$REPO/}" bash -n "$f"
 done
 if have node; then
-  for f in "$HARNESS"/modules/web/root/vr/*.mjs "$HARNESS"/tests/vr/*.mjs; do check "node --check ${f#$REPO/}" node --check "$f"; done
+  for f in "$HARNESS"/modules/web/root/vr/*.mjs "$HARNESS"/tests/vr/*.mjs "$HARNESS"/tests/vr/site/*.mjs; do check "node --check ${f#$REPO/}" node --check "$f"; done
 else skip "node not installed: .mjs syntax checks"; fi
 
 echo; echo "== fast: golden snapshots of generated files =="
@@ -358,6 +362,39 @@ PY
 if have gitleaks; then check "no secrets in the repo (gitleaks)" bash -c "cd '$REPO' && gitleaks detect --no-git -s . --no-banner -l error"; else skip "gitleaks not installed"; fi
 
 if [ "$UPDATE" = 1 ]; then echo; echo "snapshots regenerated — review: git -C '$REPO' diff --stat harness/tests/golden"; exit 0; fi
+
+# ============================================================ BROWSER TIER
+if [ "$TIER" = browser ]; then
+  for t in node npm python3; do have "$t" || { echo "browser tier needs '$t' on the host"; exit 2; }; done
+  echo; echo "== browser: shoot.mjs, discover.mjs and vr.sh in headless Chromium, against a local test site (no model) =="
+  BDEPS="$WORK/browser-deps"; mkdir -p "$BDEPS"; cp "$HARNESS/modules/web/root/vr/package.json" "$BDEPS/"
+  if ! (cd "$BDEPS" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund >"$WORK/npm.log" 2>&1); then
+    fail "browser tier: npm install"; tail -8 "$WORK/npm.log" | sed 's/^/        /'
+  else
+    launches() { (cd "$BDEPS" && node -e "import('./node_modules/playwright/index.mjs').then(p=>p.chromium.launch(process.env.VR_CHROMIUM?{executablePath:process.env.VR_CHROMIUM}:{})).then(b=>b.close())" >/dev/null 2>&1); }
+    if ! launches; then
+      for c in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux/chrome \
+               "$HOME"/Library/Caches/ms-playwright/chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium \
+               "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+               "$(command -v chromium 2>/dev/null)" "$(command -v chromium-browser 2>/dev/null)" "$(command -v google-chrome 2>/dev/null)"; do
+        [ -n "$c" ] && [ -x "$c" ] || continue
+        export VR_CHROMIUM="$c"; launches && break
+        unset VR_CHROMIUM
+      done
+    fi
+    if ! launches; then
+      skip "browser tier: no Chromium that launches (npx playwright install chromium, or set VR_CHROMIUM to a Chrome/Chromium binary)"
+    else
+      echo "   Chromium: ${VR_CHROMIUM:-the default Playwright browser}"
+      if node "$VRT/browser.test.mjs" "$HARNESS/modules/web/root/vr" "$BDEPS" >"$WORK/browser.out" 2>&1; then
+        sed 's/^/  /' "$WORK/browser.out"; pass "browser tests ($(grep -c '^ok ' "$WORK/browser.out") scenarios)"
+      else
+        sed 's/^/  /' "$WORK/browser.out"; fail "browser tests"
+      fi
+    fi
+  fi
+  echo; echo "tier: browser   passed: $PASSES   failed: $FAILS"; [ "$FAILS" -eq 0 ] && exit 0 || exit 1
+fi
 
 # ============================================================ JUDGE TIER
 if [ "$TIER" = judge ]; then
