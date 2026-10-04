@@ -81,6 +81,10 @@ binary, or run `npx playwright install chromium`). Runs the real `shoot.mjs`, `d
   an expired session or a missing `loggedIn` marker is an error (not a screenshot of the login page), a wrong password or a missing
   variable fails clearly, `VR_<PROFILE>_STATE` works as JSON or a path, `--manual` waits for the `loggedIn` marker; and pages behind a
   login go to the judge like any other, and are kept away from it (a changed one then fails the run) only when the profile says `"judge": false`.
+- Steps and names: click, hover, fill then press Enter, select and waitFor reach a state (a dialog, a menu, a search result) that looks
+  the same as a page where that state is already shown; a step that cannot run stops the run, names the step and never prints what was
+  typed; what one page's steps change does not leak into the next page; the same path can be shot twice under different names (logged
+  out and logged in); and a state that can no longer be reached fails `vr.sh` and leaves the baseline alone.
 - `--discover`: linked and sitemap pages are found; logout, files, off-site and mail links are skipped; broken links and off-site
   redirects are reported; `DISCOVER_MAX` stops the crawl.
 - `vr.sh` end to end: record, an unchanged compare (the judge is not called), a page that loses its navigation fails the gate, and a
