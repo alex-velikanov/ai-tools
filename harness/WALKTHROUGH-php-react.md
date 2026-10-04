@@ -362,10 +362,10 @@ Per-page options for content that would otherwise cause false alarms or missed p
 - **Sessions expire, and that is checked.** Before it shoots a logged-in page, `vr.sh` checks that the page did not redirect to the login
   page and that the `loggedIn` selector (something on every logged-in page, such as an account menu) is there. If not, the run stops
   with "run `vr.sh --login customer` again". Without this, a baseline of the login form compared with another login form would pass.
-- **Logged-in screenshots do not go to the judge by default.** They are compared as pixels only, and a changed one fails the run (the
-  report says it was not judged), because nothing else can vouch for it. Use a dedicated test account with fake data and `mask` for
-  anything that changes on its own. Add `"judge": true` to a profile to let the AI judge see its pages. Either way the `baseline/`,
-  `current/` and `report/` folders now hold logged-in pages: do not publish them.
+- **Logged-in pages go to the judge like any other.** Run this against local or staging with a test account that has fake data. If a
+  profile must not be seen by the AI judge, add `"judge": false`: its pages are then compared as pixels only, and a changed one fails
+  the run (the report says it was not judged), because nothing else can vouch for it. The `baseline/`, `current/` and `report/` folders
+  hold logged-in pages: do not publish them.
 - A session is a live login. Do not commit it, paste it in a ticket, or leave it in a shared CI artifact.
 
 The list is the test, not a crawl: only the pages you list are compared, so a broken nav link cannot make a page
