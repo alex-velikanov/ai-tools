@@ -364,7 +364,8 @@ first, then the ones that need a look (a warning, or no verdict from the judge),
 baseline, current and a pixel diff side by side, with the judge's severity, what it says it saw, its findings, and any
 re-check or warning. The folder is self-contained (it copies the images it shows into `report/img/`), so you can zip it or
 upload it as a CI artifact; it is about 0.5 MB per changed screenshot at desktop size. The page uses no JavaScript, and
-everything the judge wrote is escaped, because the judge reads untrusted pages. A report is written whatever the verdict.
+everything the judge wrote is escaped, because the judge reads untrusted pages. A report is written whatever the verdict,
+including when the judge's reply cannot be read at all: the run still exits 1, and the report says NO VERDICT and shows the reply.
 
 Then:
 

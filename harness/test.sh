@@ -356,6 +356,16 @@ else
     t_report_prints_path() { run_with "$(sev 4)" >/dev/null; grep -q '^report: report/index.html' "$WORK/vr.out"; }
     t_no_report_on_record() { reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1); [ ! -e "$R/report" ] && [ ! -e "$R/diff" ]; }
     t_stale_report_removed() { prep; mkdir -p "$R/report"; echo old > "$R/report/stale.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -e "$R/report/stale.txt" ]; }
+    t_report_on_unreadable_reply() {
+      local rc1 rc2
+      prep; printf 'I could not open the images. <b>x</b>' > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; rc1=$?
+      [ $rc1 = 1 ] && [ -f "$R/judge_errors.json" ] && [ ! -e "$R/report.json" ] || return 1
+      grep -q 'NO VERDICT' "$R/report/index.html" && grep -q 'could not open the images' "$R/report/index.html" \
+        && grep -q '&lt;b&gt;x&lt;/b&gt;' "$R/report/index.html" && grep -q 'home__0.png' "$R/report/index.html" && ! grep -q 'PASS' "$R/report/index.html" || return 1
+      # the next run starts clean: a good reply leaves no judge_errors.json and no NO VERDICT banner behind
+      prep; printf '%s' "$(sev 0)" > "$R/claude.out"; vrrun "$R" >"$WORK/vr2.out" 2>&1; rc2=$?
+      [ $rc2 = 0 ] && [ ! -e "$R/judge_errors.json" ] && ! grep -q 'NO VERDICT' "$R/report/index.html"
+    }
     t_report_failure_is_not_fatal() {
       local rc4 rc0
       printf 'import sys\nsys.exit(1)\n' > "$R/html_report.py"
@@ -371,7 +381,8 @@ else
     check "a run with nothing changed writes one that says so"                     t_report_unchanged
     check "vr.sh prints where the report is"                                       t_report_prints_path
     check "--record writes no report and no diff folder"                           t_no_report_on_record
-    check "a stale report/ is removed when a run dies before it can write one"     t_stale_report_removed
+    check "a stale report/ is replaced when a run dies after the judge answered"   t_stale_report_removed
+    check "an unreadable judge reply still writes a report with the reply, and exits 1" t_report_on_unreadable_reply
     check "a report that cannot be written changes neither a failing nor a passing exit code" t_report_failure_is_not_fatal
     check "a changed file the judge gave no verdict for makes the report INCOMPLETE, not PASS"  t_report_incomplete
 
