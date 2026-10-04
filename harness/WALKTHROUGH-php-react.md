@@ -381,6 +381,7 @@ deploy into the new normal. Without a baseline, `vr.sh` stops and tells you to r
 Unchanged pages are dropped by a pixel check first (a screenshot only on one side counts as changed), so the model only judges pages that
 changed. It exits non-zero at severity 3 or above. Calibrate `vr/rubric.md` against about 20
 labelled before/after pairs before you trust it, and re-run them when you switch models.
+If Playwright cannot find its Chromium (a corporate machine, or a different Playwright version), set `VR_CHROMIUM` to a Chrome or Chromium binary and `vr.sh` uses that.
 It needs a running site; locally that is `docker compose up -d web`, then `vr/vr.sh http://localhost:5173`.
 
 ---
