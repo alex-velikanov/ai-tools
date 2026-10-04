@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 from urllib.parse import quote
+from report import severity as sev_of, severity_ok
 
 OUT = 'report'
 MAX_TEXT = 2000
@@ -43,14 +44,7 @@ def e(value):
 
 def usable(entry):
     """True if the judge gave this file a verdict that can be relied on (not missing, not an unreadable severity)."""
-    return bool(entry) and not entry.get('judge_incomplete')
-
-
-def sev_of(entry):
-    try:
-        return int(entry.get('severity', 0))
-    except (TypeError, ValueError):
-        return 0
+    return bool(entry) and not entry.get('judge_incomplete') and severity_ok(entry)
 
 
 def label(filename):

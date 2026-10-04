@@ -167,9 +167,9 @@ def final():
             first['first_severity'] = None if 'severity_raw' in first else first.get('severity', 0)
         first['rechecked'] = s['reason']
         if second_ok:
+            if first.get('judge_incomplete') or sev2 > (first.get('severity', 0) or 0):
+                first['severity'], first['verdict'] = sev2, second.get('verdict', 'fail')
             first['judge_incomplete'] = False         # a usable second opinion completes the verdict
-        if sev2 > (first.get('severity', 0) or 0):
-            first['severity'], first['verdict'] = sev2, second.get('verdict', 'fail')
         if isinstance(second.get('findings'), list):
             first['findings'] = (first['findings'] if isinstance(first.get('findings'), list) else []) + second['findings']
         if second.get('seen') and not first.get('seen'):

@@ -170,6 +170,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn('PASS', page)
         self.assertNotIn('Failed (', page)
 
+    def test_unreadable_severity_cannot_make_a_pass_without_an_incomplete_flag(self):
+        self.put('changed.json', ['page.png'])
+        for value in [None, 'high', True, {}, [], -1, 7, 'nan', float('inf')]:
+            with self.subTest(value=value):
+                self.put('report.json', [{'file': 'page.png', 'severity': value}])
+                page = self.run_report()
+                self.assertIn('INCOMPLETE', page)
+                self.assertIn('No usable verdict', page)
+                self.assertNotIn('PASS', page)
+
+
     def test_file_names_from_the_judge_cannot_reach_files_outside_the_screenshot_folders(self):
         outer = self.root / 'outer'
         work = outer / 'vr'

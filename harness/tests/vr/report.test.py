@@ -93,6 +93,20 @@ class SeverityTests(unittest.TestCase):
         warnings = [w['warning'] for w in self.read('warnings.json')]
         self.assertTrue(any('nothing usable' in w and 'unreadable severity' in w for w in warnings), warnings)
 
+    def test_unreadable_first_fail_is_replaced_by_a_zero_severity_pass(self):
+        for value in [None, 'high']:
+            with self.subTest(value=value):
+                self.write('raw_report.1.txt', [{'file': 'page', 'severity': value, 'verdict': 'fail'}])
+                self.write('changed.json', ['page'])
+                self.run_report('merge')
+                self.write('recheck.1.txt', [{'file': 'page', 'severity': 0, 'verdict': 'pass'}])
+                self.run_report('final')
+                record = self.read('report.json')[0]
+                self.assertEqual((record['severity'], record['verdict']), (0, 'pass'))
+                self.assertFalse(record['judge_incomplete'])
+                self.assertIsNone(record['first_severity'])
+                self.assertEqual(record['severity_raw'], value)
+
     def test_numeric_strings_in_any_numeric_form_are_read_the_same_way_everywhere(self):
         for value, expected in [('3.0', 3), ('1e0', 1), (' 4 ', 4), ('4', 4), (3.9, 3), ('0.0', 0), ('5', 5)]:
             with self.subTest(value=value):
