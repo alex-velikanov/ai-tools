@@ -2,9 +2,12 @@
 # Tests for the harness and the skills installer.
 #
 #   ./test.sh                  fast tier: seconds, starts no containers. Golden snapshots of generated
-#                              files, compose validity, error paths, idempotency, skills installer, doc links.
+#                              files, compose validity, error paths, idempotency, skills installer, the vr tool
+#                              (pixel filter, baseline rotation, report parsing and exit code), doc links.
 #   ./test.sh full             fast tier + real containers: the demo app end to end, and two projects with
 #                              different PHP / Node / database versions running side by side.
+#   ./test.sh judge            calibrate the vr judge: the real `claude -p` over labelled before/after pages (needs claude,
+#                              node and a Chromium; ~2 minutes; uses plan tokens). Fails if it misses broken pages or flags fine ones.
 #   ./test.sh --update-golden  regenerate tests/golden/ (review the git diff before committing it)
 #   Flags: --with-llm  also run the eval harness via `claude -p` (full tier, uses plan tokens)
 #          --keep      keep the temp directory
@@ -15,7 +18,7 @@ HARNESS="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HARNESS/.." && pwd)"
 TIER=fast; WITH_LLM=0; KEEP=0; UPDATE=0
 for a in "$@"; do case "$a" in
-  fast|full) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
+  fast|full|judge) TIER="$a" ;; --with-llm) WITH_LLM=1 ;; --keep) KEEP=1 ;; --update-golden) UPDATE=1 ;;
   *) echo "unknown argument: $a" >&2; exit 2 ;; esac; done
 
 WORK="$(mktemp -d)"; GOLDEN="$HARNESS/tests/golden"
@@ -38,9 +41,12 @@ boot() { local dir="$1"; shift; "$HARNESS/bootstrap.sh" "$dir" "$@" >"$WORK/boot
 
 # ============================================================ FAST TIER
 echo "== fast: syntax =="
-for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/harvest.sh" "$HARNESS/modules/web/root/vr/vr.sh"; do
+for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/harvest.sh" "$HARNESS/modules/web/root/vr/vr.sh" "$HARNESS/tests/vr/judge/run.sh"; do
   check "bash -n ${f#$REPO/}" bash -n "$f"
 done
+if have node; then
+  for f in "$HARNESS"/modules/web/root/vr/*.mjs "$HARNESS"/tests/vr/*.mjs; do check "node --check ${f#$REPO/}" node --check "$f"; done
+else skip "node not installed: .mjs syntax checks"; fi
 
 echo; echo "== fast: golden snapshots of generated files =="
 # Project dir is always named "proj" so paths and the compose project name are stable.
@@ -131,6 +137,211 @@ for d in sorted(os.listdir(sys.argv[1])):
 print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
 
+echo; echo "== fast: vr tool (no browser, no model: shoot.mjs and claude are stubbed) =="
+VRSRC="$HARNESS/modules/web/root/vr"; VRT="$HARNESS/tests/vr"
+check "judge severity normalization in merge and re-check" python3 "$VRT/report.test.py" "$VRSRC"
+if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
+else
+  check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
+  check "judge calibration: scoring and case labels (judge/score.mjs)" node "$VRT/judge/score.test.mjs"
+  check "--discover link rules: normalising, skips, sitemap, new paths (links.mjs)"      node "$VRT/links.test.mjs" "$VRSRC"
+  check "the shipped pages.json resolves to desktop, tablet and mobile for /" bash -c "cd '$VRSRC' && node -e \"import('./config.mjs').then(m=>{const t=m.resolveTargets(JSON.parse(require('fs').readFileSync('pages.json')));if(t.map(x=>x.viewport).join()!=='desktop,tablet,mobile')process.exit(1)})\""
+  VRDEPS="$WORK/vr-deps"; mkdir -p "$VRDEPS"; cp "$VRSRC/package.json" "$VRDEPS/"
+  if (cd "$VRDEPS" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund >"$WORK/npm.log" 2>&1); then
+    pass "vr dependencies install (playwright, pixelmatch, pngjs)"
+    check "vr dependencies import" bash -c "cd '$VRDEPS' && node -e \"import('pngjs').then(()=>import('pixelmatch')).then(()=>import('playwright'))\""
+
+    vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
+      local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
+      echo "$d"
+    }
+    png() { (cd "$1" && node png.mjs "${@:2}"); }   # png <dir> <out> <w> <h> [x,y,w,h]
+    changed_of() { (cd "$1" && node filter.mjs >/dev/null 2>&1 && python3 -c "import json; print(' '.join(sorted(json.load(open('changed.json')))))"); }
+    vrrun() { (cd "$1" && SHOTS="$1/shots" CLAUDE_STUB_LOG="$1/claude.log" CLAUDE_STUB_OUT="$1/claude.out" PATH="$1/bin:$PATH" ./vr.sh http://stub); }
+
+    echo "-- filter.mjs: which screenshots count as changed (threshold: more than 50 differing pixels)"
+    F="$(vrdir filter)"; mkdir -p "$F/baseline" "$F/current"
+    for n in same noise tiny big gone resized; do png "$F" "baseline/$n.png" 1000 1000; done
+    png "$F" current/same.png    1000 1000
+    png "$F" current/noise.png   1000 1000 10,10,5,8        # 40 px differ: under the threshold
+    png "$F" current/tiny.png    1000 1000 10,10,10,10      # 100 px differ: a small element gone, on a 1,000,000 px image
+    png "$F" current/big.png     1000 1000 100,100,100,100  # 10,000 px differ
+    png "$F" current/resized.png 1000 1200                  # page got taller
+    png "$F" current/extra.png   1000 1000                  # exists only in current/ (new page or new tile)
+    png "$F" baseline/wentblank.png 1000 1000 100,100,300,300; png "$F" current/wentblank.png 1000 1000      # real page -> flat white
+    png "$F" baseline/stillblank.png 1000 1000;                png "$F" current/stillblank.png 1000 1000 10,10,12,12   # was already blank
+    png "$F" baseline/huge.png 1000 1000;                      png "$F" current/huge.png 1000 1000 0,0,1000,600       # 60% of the page differs
+    CH=" $(changed_of "$F") "
+    check "identical image is unchanged"                     bash -c "! echo '$CH' | grep -q ' same.png '"
+    check "a difference of 40 px is ignored as noise"        bash -c "! echo '$CH' | grep -q ' noise.png '"
+    check "a small real change (100 px) is caught"           bash -c "echo '$CH' | grep -q ' tiny.png '"
+    check "a large difference is changed"                    bash -c "echo '$CH' | grep -q ' big.png '"
+    check "an image missing from current/ is changed"        bash -c "echo '$CH' | grep -q ' gone.png '"
+    check "an image only in current/ is changed (new page or tile)" bash -c "echo '$CH' | grep -q ' extra.png '"
+    check "a size mismatch is changed"                       bash -c "echo '$CH' | grep -q ' resized.png '"
+    check "a page that went flat/blank is listed in blank.json" bash -c "python3 -c \"import json; assert json.load(open('$F/blank.json'))==['wentblank.png'], open('$F/blank.json').read()\""
+    check "a page that was already blank, or just changed a lot, is not" bash -c "echo '$CH' | grep -q ' stillblank.png ' && ! grep -q 'stillblank\|big.png' '$F/blank.json'"
+    check "diffs.json gives the % of pixels that differ (huge ~60, big ~1, same 0)" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert abs(d['huge.png']-60)<0.2 and abs(d['big.png']-1)<0.2 and d['same.png']==0, d\""
+    check "diffs.json has no figure for size mismatches or one-sided files" bash -c "python3 -c \"import json; d=json.load(open('$F/diffs.json')); assert 'resized.png' not in d and 'extra.png' not in d and 'gone.png' not in d, d\""
+    check "VR_MIN_DIFF_PX overrides the threshold"           bash -c "cd '$F' && VR_MIN_DIFF_PX=10 node filter.mjs >/dev/null && grep -q noise.png changed.json"
+
+    invalid_threshold() {
+      local value
+      for value in nonsense NaN Infinity -Infinity -1; do
+        if (cd "$F" && VR_MIN_DIFF_PX="$value" node filter.mjs >"$WORK/filter.out" 2>&1); then return 1; fi
+        grep -q 'VR_MIN_DIFF_PX must be finite and non-negative' "$WORK/filter.out" || return 1
+      done
+    }
+    check "invalid pixel thresholds fail with a clear error" invalid_threshold
+    check "zero is a valid pixel threshold" bash -c "cd '$F' && VR_MIN_DIFF_PX=0 node filter.mjs >/dev/null && grep -q noise.png changed.json"
+    check "blank pages bypass even a threshold above the whole image size" bash -c "cd '$F' && VR_MIN_DIFF_PX=1000001 node filter.mjs >/dev/null && python3 -c \"import json; assert 'wentblank.png' in json.load(open('changed.json')); assert json.load(open('blank.json'))==['wentblank.png']; assert 'big.png' not in json.load(open('changed.json'))\""
+
+    echo "-- vr.sh: record, compare, baseline safety, report parsing, exit code"
+    R="$(vrdir run)"
+    reset() { rm -rf "$R/baseline" "$R/current" "$R/baseline.new" "$R/baseline.copy" "$R/changed.json" "$R/report.json" "$R/raw_report.txt" "$R/claude.log" "$R/claude.log.calls" "$R/claude.out".[0-9]* "$R/blank.json" "$R/diffs.json" "$R/warnings.json" "$R/raw_report".*.txt "$R/shots"/*; }
+    reset; png "$R" shots/home__0.png 1000 1000
+    (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh --record http://stub >"$WORK/vr.out" 2>&1)
+    check "--record writes the baseline"                     bash -c "test -f '$R/baseline/home__0.png' && grep -q 'baseline recorded: 1' '$WORK/vr.out'"
+    check "--record leaves no temp folder behind"            test ! -e "$R/baseline.new"
+    check "--record does not call the model"                 test ! -e "$R/claude.log"
+
+    bad_shots() { png "$R" shots/home__0.png 1000 1000 100,100,100,100; }   # the "broken deploy"
+    reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1)
+    cp "$R/baseline/home__0.png" "$R/baseline.copy"
+    bad_shots; echo '[{"file":"home__0.png","severity":4}]' > "$R/claude.out"
+    vrrun "$R" >/dev/null 2>&1; first=$?; vrrun "$R" >/dev/null 2>&1; second=$?
+    check "a broken build fails the compare"                 test "$first" = 1
+    check "re-running does NOT make the broken build the baseline" test "$second" = 1
+    check "the baseline is untouched by compare runs"        bash -c "cmp -s '$R/baseline/home__0.png' '$R/baseline.copy' && ! cmp -s '$R/baseline/home__0.png' '$R/current/home__0.png'"
+    check "--record again accepts the new build"             bash -c "cd '$R' && SHOTS='$R/shots' ./vr.sh --record http://stub >/dev/null 2>&1 && cmp -s baseline/home__0.png shots/home__0.png"
+
+    reset
+    rc=0; (cd "$R" && SHOTS="$R/shots" PATH="$R/bin:$PATH" ./vr.sh http://stub >"$WORK/vr.out" 2>&1) || rc=$?
+    check "with no baseline it exits 2 and says to --record" bash -c "[ $rc = 2 ] && grep -q 'vr.sh --record' '$WORK/vr.out'"
+    rc=0; (cd "$R" && ./vr.sh >"$WORK/vr.out" 2>&1) || rc=$?
+    check "with no URL it prints usage and exits 2"          bash -c "[ $rc = 2 ] && grep -q usage '$WORK/vr.out'"
+    rc=0; (cd "$R" && ./vr.sh --discover >"$WORK/vr.out" 2>&1) || rc=$?
+    check "--discover with no URL prints usage and exits 2"  bash -c "[ $rc = 2 ] && grep -q 'discover' '$WORK/vr.out'"
+
+    reset; png "$R" shots/home__0.png 1000 1000; (cd "$R" && SHOTS="$R/shots" ./vr.sh --record http://stub >/dev/null 2>&1)
+    rc=0; (cd "$R" && SHOTS="$R/nonexistent" ./vr.sh --record http://stub >/dev/null 2>&1) || rc=$?
+    check "a failed --record keeps the old baseline"         bash -c "[ $rc != 0 ] && test -f '$R/baseline/home__0.png' && test ! -e '$R/baseline.new'"
+
+    # a baseline exists (home__0 plain); the build under test is given by shots/
+    prep() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000 100,100,100,100; }
+    run_with() { prep; printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?; }
+    sev() { printf '[{"file":"home__0.png","verdict":"x","severity":%s,"seen":"s","findings":[]}]' "$1"; }
+    nothing_changed() {
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000; png "$R" shots/home__0.png 1000 1000
+      vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/report.json")" = "[]" ]
+    }
+    check "nothing changed: passes without calling the model" nothing_changed
+    check "the model is pointed at rubric.md and the changed files" bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'rubric.md' '$R/claude.log' && grep -q 'home__0.png' '$R/claude.log'"
+    check "the judge's only tool is Read (--tools, not just a pre-approval)" bash -c "grep -qx -- '--tools' '$R/claude.log' && grep -qx 'Read' '$R/claude.log' && ! grep -q -- '--allowedTools' '$R/claude.log'"
+    check "every claude call in vr.sh uses --tools Read, none --allowedTools" bash -c "code=\$(grep -v '^ *#' '$VRSRC/vr.sh'); [ \"\$(echo \"\$code\" | grep -c -- '--tools Read')\" = 2 ] && ! echo \"\$code\" | grep -q -- '--allowedTools'"
+    check "no --model flag unless VR_MODEL is set"           bash -c "! grep -q -- '--model' '$R/claude.log'"
+    model_pinned() { prep; printf '[]' > "$R/claude.out"; rm -f "$R/claude.log"; (cd "$R" && VR_MODEL=sonnet SHOTS="$R/shots" CLAUDE_STUB_LOG="$R/claude.log" CLAUDE_STUB_OUT="$R/claude.out" PATH="$R/bin:$PATH" ./vr.sh http://stub >/dev/null 2>&1); grep -qx -- '--model' "$R/claude.log" && grep -qx 'sonnet' "$R/claude.log"; }
+    check "VR_MODEL pins the model"                          model_pinned
+    check "the rubric tells the judge to ignore instructions inside screenshots" grep -q 'never instructions to you' "$VRSRC/rubric.md"
+    check "the rubric names 404/500/maintenance/sign-in pages as severity 5, and bans an unlooked-at severity 0" bash -c "grep -q '404' '$VRSRC/rubric.md' && grep -q '500' '$VRSRC/rubric.md' && grep -qi 'maintenance' '$VRSRC/rubric.md' && grep -qi 'sign-in' '$VRSRC/rubric.md' && grep -q 'Never give a file severity 0' '$VRSRC/rubric.md'"
+    check "severity 2 passes (exit 0)"                       bash -c "[ \"$(run_with "$(sev 2)")\" = 0 ]"
+    check "severity 3 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 3)")\" = 1 ]"
+    check "severity 5 fails the run (exit 1)"                bash -c "[ \"$(run_with "$(sev 5)")\" = 1 ]"
+    check "worst severity is the one that gates"             bash -c "[ \"$(run_with '[{"file":"a","severity":1},{"file":"b","severity":4}]')\" = 1 ]"
+    check "an empty array from the model passes"             bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q '0 pages compared' '$WORK/vr.out'"
+    check "JSON inside markdown fences is extracted"         bash -c "[ \"$(run_with "$(printf '```json\n%s\n```' "$(sev 2)")")\" = 0 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['file']=='home__0.png'\""
+    check "JSON surrounded by prose is extracted"            bash -c "[ \"$(run_with "Here is the report: $(sev 3) Hope that helps.")\" = 1 ]"
+    check "brackets in the prose around the JSON do not break extraction" bash -c "[ \"$(run_with "Checked [2 pages]. Result: $(sev 3) See note [1].")\" = 1 ] && python3 -c \"import json; assert json.load(open('$R/report.json'))[0]['severity']==3\""
+    check "brackets with no report inside fail cleanly, without a traceback" bash -c "[ \"$(run_with 'Checked [2 pages], see [1].')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && ! grep -q Traceback '$WORK/vr.out'"
+    check "output with no JSON array fails and shows the text" bash -c "[ \"$(run_with 'I could not open the images.')\" = 1 ] && grep -q 'No JSON array found' '$WORK/vr.out' && grep -q 'could not open' '$WORK/vr.out'"
+    check "a record with no severity counts as 0"            bash -c "[ \"$(run_with '[{"file":"a","verdict":"pass"}]')\" = 0 ]"
+    blank_case() {  # blank_case <canned model reply>: baseline is a real page, the build under test is flat white
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000
+      printf '%s' "$1" > "$R/claude.out"; vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    check "a blank page fails even if the judge says severity 0" bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert r['severity']==5 and r['verdict']=='fail' and len(r['findings'])==1\""
+    check "a blank page fails even if the judge leaves it out"   bash -c "[ \"$(blank_case '[]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json')); assert r[0]['file']=='home__0.png' and r[0]['severity']==5\""
+    check "a judge verdict already at severity 5 is kept as is"   bash -c "[ \"$(blank_case '[{"file":"home__0.png","verdict":"fail","severity":5,"seen":"s","findings":[{"what":"x"}]}]')\" = 1 ] && python3 -c \"import json; r=json.load(open('$R/report.json'))[0]; assert len(r['findings'])==1\""
+    echo "-- vr.sh: big-diff warnings, unjudged files, batching"
+    big_diff() {  # big_diff <canned reply> [extra env]: 51% of the pixels differ (not blank)
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$1" > "$R/claude.out"; env ${2:-X=1} bash -c "cd '$R' && SHOTS='$R/shots' CLAUDE_STUB_LOG='$R/claude.log' CLAUDE_STUB_OUT='$R/claude.out' PATH='$R/bin:'\$PATH ./vr.sh http://stub" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    warned() { python3 -c "import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['home__0.png'], w"; }
+    check "judge says 0 but 51% of the pixels differ: warns, exit code unchanged" bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]')\" = 0 ] && grep -q '^WARNING home__0.png: 51% of pixels differ' '$WORK/vr.out' && warned"
+    check "no warning when the judge already fails the page"                 bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"fail","severity":4,"seen":"s","findings":[]}]')\" = 1 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "no warning below the threshold (VR_WARN_DIFF_PCT=70)"              bash -c "[ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]' VR_WARN_DIFF_PCT=70)\" = 0 ] && [ \"\$(cat '$R/warnings.json' | tr -d ' \n')\" = '[]' ]"
+    check "a lower threshold warns on a smaller diff (VR_WARN_DIFF_PCT=1)"     bash -c "$(declare -f warned); R='$R'; [ \"$(big_diff '[{"file":"home__0.png","verdict":"pass","severity":2,"seen":"s","findings":[]}]' VR_WARN_DIFF_PCT=1)\" = 0 ] && warned"
+    check "a changed file the judge never mentions is warned about"            bash -c "[ \"$(run_with '[]')\" = 0 ] && grep -q 'no verdict' '$R/warnings.json'"
+
+    multi() {  # multi <n> <batch size> [reply for call 1] [reply for call 2] ...: n changed files, judged <batch> at a time
+      local n=$1 b=$2; shift 2; reset
+      mkdir -p "$R/baseline"; for i in $(seq 1 "$n"); do png "$R" "baseline/f$i.png" 1000 1000; png "$R" "shots/f$i.png" 1000 1000 10,10,$((10+i*5)),40; done
+      echo '[]' > "$R/claude.out"; local k=1; for r in "$@"; do printf '%s' "$r" > "$R/claude.out.$k"; k=$((k+1)); done
+      VR_BATCH=$b vrrun "$R" >"$WORK/vr.out" 2>&1; echo $?
+    }
+    calls() { wc -l < "$R/claude.log.calls" | tr -d ' '; }
+    ok() { printf '[{"file":"f%s.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]' "$1"; }
+    rep() { local out="" ; for i in "$@"; do out="$out${out:+,}{\"file\":\"f$i.png\",\"verdict\":\"pass\",\"severity\":${SEV:-0},\"seen\":\"s\",\"findings\":[]}"; done; printf '[%s]' "$out"; }
+    check "5 files, batch 2: three judge calls"                                bash -c "multi_out=\"$(multi 5 2 "$(rep 1 2)" "$(rep 3 4)" "$(rep 5)")\"; [ \"\$multi_out\" = 0 ] && [ \"$(calls)\" = 3 ]"
+    check "each call is asked about only its own files"                         bash -c "grep -c 'f1.png f2.png' '$R/claude.log' | grep -q 1 && ! grep 'f1.png f2.png' '$R/claude.log' | grep -q 'f3.png' && grep -q 'f5.png' '$R/claude.log'"
+    check "the batches' reports are merged into one report.json"               bash -c "python3 -c \"import json; r=json.load(open('$R/report.json')); assert sorted(x['file'] for x in r)==['f1.png','f2.png','f3.png','f4.png','f5.png'], r\""
+    check "the default batch size is 6: 5 files go in one call"                bash -c "[ \"$(multi 5 6 "$(rep 1 2 3 4 5)")\" = 0 ] && [ \"$(calls)\" = 1 ]"
+    check "a finding in a later batch still fails the run"                      bash -c "[ \"$(SEV=4 multi 5 2 "$(SEV=0 rep 1 2)" "$(SEV=0 rep 3 4)" "$(SEV=4 rep 5)")\" = 1 ]"
+    check "a batch with no JSON fails the run and names its reply file"        bash -c "[ \"$(multi 5 2 "$(rep 1 2)" 'sorry, cannot open images' "$(rep 5)")\" = 1 ] && grep -q 'raw_report.2.txt' '$WORK/vr.out'"
+    check "a file the judge dropped from its batch is warned about"            bash -c "[ \"$(multi 3 3 "$(rep 1 2)")\" = 0 ] && python3 -c \"import json; w=json.load(open('$R/warnings.json')); assert [x['file'] for x in w]==['f3.png'], w\""
+
+    echo "-- vr.sh: second look at suspect verdicts"
+    F1='[{"file":"home__0.png","verdict":"pass","severity":0,"findings":[]}]'                       # no "seen"
+    S0='[{"file":"home__0.png","verdict":"pass","severity":0,"seen":"s","findings":[]}]'
+    S4='[{"file":"home__0.png","verdict":"fail","severity":4,"seen":"a broken page","findings":[{"what":"it is broken"}]}]'
+    S2='[{"file":"home__0.png","verdict":"fail","severity":2,"findings":[]}]'
+    # second <first reply> <second reply> [env assignment]: a 1% diff on home__0.png (under the re-check threshold)
+    second() { prep; printf '%s' "$1" > "$R/claude.out"; printf '%s' "$2" > "$R/claude.out.2"; env ${3:-X=1} bash -c "cd '$R' && SHOTS='$R/shots' CLAUDE_STUB_LOG='$R/claude.log' CLAUDE_STUB_OUT='$R/claude.out' PATH='$R/bin:'\$PATH ./vr.sh http://stub" >"$WORK/vr.out" 2>&1; echo $?; }
+    json() { python3 -c "import json,sys; d=json.load(open('$R/$1')); $2"; }
+    t_no_recheck()   { [ "$(second "$S0" "$S4")" = 0 ] && [ "$(calls)" = 1 ]; }
+    t_recheck_raises() { [ "$(second "$F1" "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity']==0 and 'rechecked' in r, r"; }
+    t_recheck_prompt() { second "$F1" "$S0" >/dev/null; grep -q 'independent second look' "$R/claude.log" && [ "$(grep -c 'home__0.png' "$R/claude.log")" -ge 2 ]; }
+    t_never_lowers()   { [ "$(second "$S2" "$S0")" = 0 ] && json report.json "r=d[0]; assert r['severity']==2 and r['first_severity']==2, r"; }
+    t_bad_recheck()    { [ "$(second "$F1" "I could not open it.")" = 0 ] && json warnings.json "assert any('nothing usable' in w['warning'] for w in d), d" && json report.json "assert d[0]['severity']==0"; }
+    t_bad_recheck_keeps_fail() { [ "$(second '[{"file":"home__0.png","verdict":"fail","severity":4,"findings":[]}]' "no json")" = 1 ]; }
+    t_big_diff_recheck() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$S0" > "$R/claude.out"; printf '%s' "$S0" > "$R/claude.out.2"; vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 0 ] && [ "$(calls)" = 2 ] && json report.json "assert 'rechecked' in d[0] and '51%' in d[0]['rechecked'], d" && grep -q '^WARNING home__0.png: 51%' "$WORK/vr.out"; }
+    t_recheck_threshold() { reset; mkdir -p "$R/baseline"; png "$R" baseline/home__0.png 1000 1000 100,100,300,300; png "$R" shots/home__0.png 1000 1000 0,0,1000,600
+      printf '%s' "$S0" > "$R/claude.out"; VR_RECHECK_DIFF_PCT=60 vrrun "$R" >"$WORK/vr.out" 2>&1; [ "$(calls)" = 1 ]; }
+    t_blank_not_rechecked() { [ "$(blank_case "$F1")" = 1 ] && [ "$(calls)" = 1 ]; }
+    t_missing_rechecked()   { [ "$(second '[]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "assert d[0]['file']=='home__0.png' and d[0]['severity']==4, d"; }
+    t_cap() { multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null; rm -f "$R/claude.log.calls"
+      VR_RECHECK_MAX=1 multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null
+      [ "$(calls)" = 2 ] && json warnings.json "assert sum('Not re-checked' in w['warning'] for w in d)==2, d"; }
+    t_rechecked_all_when_under_cap() { multi 3 3 '[{"file":"f1.png","severity":0},{"file":"f2.png","severity":0},{"file":"f3.png","severity":0}]' >/dev/null; [ "$(calls)" = 4 ]; }
+    check "a described, passed page with a small diff is not re-checked"        t_no_recheck
+    check "no description: re-checked, and a higher second severity fails the run" t_recheck_raises
+    check "the re-check prompt is for one file and asks for an independent look"  t_recheck_prompt
+    t_unreadable_first() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "$S4")" = 1 ] && [ "$(calls)" = 2 ] && json report.json "r=d[0]; assert r['severity']==4 and r['first_severity'] is None and r['severity_raw']=='high', r"; }
+    t_unreadable_unusable() { [ "$(second '[{"file":"home__0.png","verdict":"pass","severity":"high","seen":"s","findings":[]}]' "no json")" = 0 ] && [ "$(calls)" = 2 ] && json warnings.json "assert any('nothing usable' in w['warning'] and 'unreadable severity' in w['warning'] for w in d), d"; }
+    check "an unreadable severity (\"high\") is re-judged, not taken as 0"        t_unreadable_first
+    check "an unreadable severity with no usable re-check is warned about"        t_unreadable_unusable
+    check "a second opinion never lowers a severity"                              t_never_lowers
+    check "an unusable re-check keeps the first verdict and warns"                t_bad_recheck
+    check "an unusable re-check does not hide a first-pass failure"               t_bad_recheck_keeps_fail
+    check "judge said 0 with 51% of pixels changed: re-checked, and still warned" t_big_diff_recheck
+    check "VR_RECHECK_DIFF_PCT sets that threshold (60: no re-check at 51%)"      t_recheck_threshold
+    check "a page forced to severity 5 as blank is not re-checked"                t_blank_not_rechecked
+    check "a file the judge left out is re-checked"                               t_missing_rechecked
+    check "undescribed verdicts for 3 files: 3 re-checks (1 batch call + 3)"      t_rechecked_all_when_under_cap
+    check "VR_RECHECK_MAX caps the re-checks and warns about the rest"            t_cap
+
+    stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
+    check "a stale report.json is removed when a run fails to parse" stale_files_removed
+  else
+    fail "vr dependencies install"; tail -8 "$WORK/npm.log" | sed 's/^/        /'
+  fi
+fi
+
 echo; echo "== fast: docs =="
 check "relative markdown links resolve" python3 - "$REPO" <<'PY'
 import os, re, subprocess, sys
@@ -147,6 +358,15 @@ PY
 if have gitleaks; then check "no secrets in the repo (gitleaks)" bash -c "cd '$REPO' && gitleaks detect --no-git -s . --no-banner -l error"; else skip "gitleaks not installed"; fi
 
 if [ "$UPDATE" = 1 ]; then echo; echo "snapshots regenerated — review: git -C '$REPO' diff --stat harness/tests/golden"; exit 0; fi
+
+# ============================================================ JUDGE TIER
+if [ "$TIER" = judge ]; then
+  for t in node npm claude; do have "$t" || { echo "judge tier needs '$t' on the host"; exit 2; }; done
+  echo; echo "== judge: the real vr pipeline (claude -p) over labelled before/after pages =="
+  echo "   (set VR_MODEL to pin a model; CHROMIUM_PATH if Playwright has no browser: npx playwright install chromium)"
+  if "$VRT/judge/run.sh" "$WORK/judge"; then pass "judge catches broken pages without flagging fine ones"; else fail "judge calibration (see scores above)"; fi
+  echo; echo "tier: judge   passed: $PASSES   failed: $FAILS"; [ "$FAILS" -eq 0 ] && exit 0 || exit 1
+fi
 
 # ============================================================ FULL TIER
 if [ "$TIER" = full ]; then

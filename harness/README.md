@@ -80,7 +80,7 @@ harness/test.sh --update-golden  # after an intended template change: regenerate
 
 ## Manual, once per project
 1. Fill in `AGENTS.md` Structure and Rules with real facts; check the Commands.
-2. Set `vr/pages.json` to real URLs (web).
+2. Set `vr/pages.json` to real paths (web); pages are shot at desktop, tablet and mobile by default.
 3. Push to GitHub; branch protection on `main`; repo secret `ANTHROPIC_API_KEY` for `eval.yml`.
 4. Sentry: project, rate limits first, then SDK.
 5. After ~2 weeks of real use: `./evals/harvest.sh`, curate ~12 cases (about half clean).

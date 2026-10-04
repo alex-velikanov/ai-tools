@@ -85,7 +85,7 @@ Drop the flag to get just the files; the commands are printed so you can run the
 | `.semgrepignore` | skips `vendor/`, `node_modules/`, `dist/`, `build/` |
 | `backend/phpstan.neon.dist`, `backend/phpunit.xml.dist` | PHPStan level 6 over `src/`; PHPUnit bootstrapped with `vendor/autoload.php`, running `tests/` |
 | `e2e/` | Playwright **on the host**, against the containerised app: config, `seed.spec.ts`, `specs/`, and the planner / generator / healer agents in `e2e/.claude/` |
-| `vr/` | visual regression tool (host): `pages.json`, `rubric.md`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
+| `vr/` | visual regression tool (host): `pages.json`, `rubric.md`, `config.mjs`, `shoot.mjs`, `filter.mjs`, `vr.sh` |
 | `.cursor/mcp.json` | `xdebug` (runs inside the `app` container via `docker compose exec -T`) and `playwright` MCP servers |
 | `evals/`, `.github/workflows/eval.yml` | eval harness for the review prompt; runs monthly and when `review-prompt.md` changes |
 | `.github/dependabot.yml` | composer (`/backend`), npm (`/frontend`), github-actions; 7-day cooldown |
@@ -317,15 +317,61 @@ the reviewer missed, add it as a new case.
 
 ## 8. Visual regression, before and after a deploy
 
-Edit `vr/pages.json` to your real URLs, e.g. `["/", "/cart", "/checkout"]`, then:
+Edit `vr/pages.json` to your real paths. Every page is shot at three viewports by default:
+desktop 1440×900, tablet 768×1024 and mobile 390×844 (tablet and mobile emulate a touch device).
 
-```bash
-vr/vr.sh https://staging.example.com     # before deploy: captures the baseline
-# ...deploy...
-vr/vr.sh https://staging.example.com     # after: compares against the baseline
+```json
+{
+  "viewports": {
+    "desktop": { "width": 1440, "height": 900 },
+    "tablet": { "width": 768, "height": 1024, "mobile": true },
+    "mobile": { "width": 390, "height": 844, "mobile": true }
+  },
+  "pages": ["/", "/cart", { "path": "/checkout", "viewports": ["mobile"] }]
+}
 ```
 
-Unchanged pages are dropped by a pixel check first, so the model only judges pages that
+A plain list such as `["/", "/cart"]` still works and uses the default viewports. A page object
+can limit itself to some viewports. Screenshots are named `<viewport>__<page>__<tile>.png`, so each
+viewport has its own baseline.
+
+Per-page options for content that would otherwise cause false alarms or missed pages:
+
+| Option | Effect |
+|---|---|
+| `"waitFor": ".ready"` | wait for that selector before shooting (content that loads after the network is idle) |
+| `"mask": [".timestamp", "#ad"]` | paint over those elements in every screenshot |
+| `"expectStatus": 404` | the status the page should return; by default any status of 400 or above fails the run |
+| `"maxTiles": 8` | allow a taller page. Pages need one screenshot per viewport-height, and more than 6 is an error, not a silent truncation. Set `"maxTiles"` at the top level to change it for every page |
+
+The list is the test, not a crawl: only the pages you list are compared, so a broken nav link cannot make a page
+quietly drop out of the check. To find pages you forgot, run `vr/vr.sh --discover http://localhost:5173`. It follows
+same-origin links (2 hops, 50 pages; `DISCOVER_DEPTH` and `DISCOVER_MAX` change that) and reads `/sitemap.xml`, then
+prints the paths that are not in `pages.json`, plus any broken links. It skips logout links and files, and
+`"discover": { "ignore": ["^/admin"] }` adds your own skip patterns. It changes nothing: copy over the ones that matter.
+Pages built from route parameters (`/invoices/123`) are found only if something links to them; list an example by hand.
+
+How the judge is kept honest: it is shown 6 screenshot pairs per call (`VR_BATCH`) and must say in one sentence what each
+page shows (`seen`). Any file it skipped, did not describe, or passed while 5% or more of its pixels changed
+(`VR_RECHECK_DIFF_PCT`) is judged again on its own, and the second opinion can only raise a severity. At most 12 files are
+re-checked per run (`VR_RECHECK_MAX`); the rest get a warning. Independently of the judge, a page that went blank always
+fails, and a page it passed while 50% or more of the pixels changed (`VR_WARN_DIFF_PCT`) gets a `WARNING` line and an
+entry in `warnings.json`; warnings never change the exit code. An actual HTTP 4xx/5xx stops the run at capture time, so the
+judge only has to catch pages that answer 200 but look wrong (a styled "not found", a maintenance page, a sign-in gate).
+
+Then:
+
+```bash
+vr/vr.sh --record https://staging.example.com   # before deploy: record the known-good build as the baseline
+# ...deploy...
+vr/vr.sh https://staging.example.com            # after: compare against the baseline
+```
+
+The baseline only changes when you run `--record`, so re-running the check never turns a broken
+deploy into the new normal. Without a baseline, `vr.sh` stops and tells you to record one. Run
+`--record` again after each deploy you have checked and accept.
+
+Unchanged pages are dropped by a pixel check first (a screenshot only on one side counts as changed), so the model only judges pages that
 changed. It exits non-zero at severity 3 or above. Calibrate `vr/rubric.md` against about 20
 labelled before/after pairs before you trust it, and re-run them when you switch models.
 It needs a running site; locally that is `docker compose up -d web`, then `vr/vr.sh http://localhost:5173`.
