@@ -409,7 +409,8 @@ if [ "$TIER" = browser ]; then
   else
     launches() { (cd "$BDEPS" && node -e "import('./node_modules/playwright/index.mjs').then(p=>p.chromium.launch(process.env.VR_CHROMIUM?{executablePath:process.env.VR_CHROMIUM}:{})).then(b=>b.close())" >/dev/null 2>&1); }
     if ! launches; then
-      for c in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux/chrome \
+      for c in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux*/chrome \
+               "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium_headless_shell-*/*/headless_shell \
                "$HOME"/Library/Caches/ms-playwright/chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium \
                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
                "$(command -v chromium 2>/dev/null)" "$(command -v chromium-browser 2>/dev/null)" "$(command -v google-chrome 2>/dev/null)"; do

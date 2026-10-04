@@ -25,7 +25,7 @@ export async function startSite() {
           <a href="/about/">about</a> <a href="/logout">logout</a> <a href="/gone">gone</a> <a href="/old">old</a>
           <a href="/missing">missing</a> <a href="/tall">tall</a> <a href="/file.pdf">pdf</a> <a href="/ok">ok</a>
           <a href="${otherUrl}/landing">external</a> <a href="mailto:a@b.c">mail</a>`));
-      case '/about': case '/ok': case '/new': case '/sitemap-only': case '/logout': case '/file.pdf':
+      case '/about/': case '/about': case '/ok': case '/new': case '/sitemap-only': case '/logout': case '/file.pdf':
         return send(res, 200, page(`<nav>site</nav><h1>${path}</h1>`));
       case '/tall':
         return send(res, 200, page('<div style="height:3000px;background:linear-gradient(#fff,#8ad)">tall</div>'));
