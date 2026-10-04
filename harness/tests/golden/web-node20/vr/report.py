@@ -47,22 +47,24 @@ def load(path, default=None):
         return default
 
 
-def severity(record):
+def parse_severity(value):
+    """The judge's severity as a number from 0 to 5 (a numeric string like "3.0" is fine), or None if it is unreadable."""
+    if isinstance(value, bool):
+        return None
     try:
-        return int(record.get('severity', 0))
-    except (TypeError, ValueError, OverflowError):
-        return 0
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 <= number <= 5 else None
 
 
 def severity_ok(record):
-    """True if the judge's severity is a number from 0 to 5 (a numeric string is fine). Anything else, or none, is unreadable."""
-    value = record.get('severity')
-    if isinstance(value, bool):
-        return False
-    try:
-        return 0 <= float(value) <= 5
-    except (TypeError, ValueError):
-        return False
+    return parse_severity(record.get('severity')) is not None
+
+
+def severity(record):
+    number = parse_severity(record.get('severity'))
+    return 0 if number is None else int(number)
 
 
 def merge():

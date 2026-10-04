@@ -93,6 +93,18 @@ class SeverityTests(unittest.TestCase):
         warnings = [w['warning'] for w in self.read('warnings.json')]
         self.assertTrue(any('nothing usable' in w and 'unreadable severity' in w for w in warnings), warnings)
 
+    def test_numeric_strings_in_any_numeric_form_are_read_the_same_way_everywhere(self):
+        for value, expected in [('3.0', 3), ('1e0', 1), (' 4 ', 4), ('4', 4), (3.9, 3), ('0.0', 0), ('5', 5)]:
+            with self.subTest(value=value):
+                self.write('raw_report.1.txt', [{'file': 'page', 'severity': value, 'seen': 'a page'}])
+                self.write('changed.json', ['page'])
+                self.write('diffs.json', {'page': 1})
+                self.run_report('merge')
+                self.assertEqual(self.read('suspects.json'), [])          # readable, so not a suspect
+                self.assertEqual(self.read('first.json')[0]['severity'], expected)   # and read as that number, not 0
+                self.run_report('final', int(expected >= 3))
+                self.assertEqual(self.read('report.json')[0]['severity'], expected)
+
     def test_readable_severities_are_not_suspects(self):
         for value in [0, 2, 3, 5, '4', 2.9, 0.0]:
             with self.subTest(value=value):
