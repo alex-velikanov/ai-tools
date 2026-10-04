@@ -19,6 +19,8 @@
 /vr/first.json
 /vr/suspects.json
 /vr/judge_errors.json
+/vr/private.json
+/vr/.auth/
 /vr/warnings.json
 /vr/report.json
 /vr/raw_report.txt

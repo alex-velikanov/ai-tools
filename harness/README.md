@@ -77,6 +77,10 @@ binary, or run `npx playwright install chromium`). Runs the real `shoot.mjs`, `d
 - Screenshots: sizes for desktop, tablet and mobile, tile counts for a tall page, the `maxTiles` limit, `waitFor` (a late-loading
   heading), `mask` (a changing element), frozen CSS animations, a base URL ending in `/`.
 - Errors: HTTP 404 and 500 stop the run, `expectStatus` allows an expected one, an unreachable server and a bad `pages.json` fail.
+- Logins: a scripted login saves a session only its owner can read and prints no credential, a page behind a login is shot logged in,
+  an expired session or a missing `loggedIn` marker is an error (not a screenshot of the login page), a wrong password or a missing
+  variable fails clearly, `VR_<PROFILE>_STATE` works as JSON or a path, `--manual` waits for the `loggedIn` marker; and pages behind a
+  login are never named to the judge (a changed one fails the run) unless the profile says `"judge": true`.
 - `--discover`: linked and sitemap pages are found; logout, files, off-site and mail links are skipped; broken links and off-site
   redirects are reported; `DISCOVER_MAX` stops the crawl.
 - `vr.sh` end to end: record, an unchanged compare (the judge is not called), a page that loses its navigation fails the gate, and a

@@ -149,6 +149,7 @@ for f in report.py html_report.py; do check "python syntax: $f" python3 -c "impo
 if ! have node || ! have npm; then skip "node/npm not installed: vr tests"
 else
   check "pages.json: viewports, per-page options, file names, validation (config.mjs)" node "$VRT/config.test.mjs" "$VRSRC"
+  check "logins: sessions, their permissions, credentials from the environment, no secret in errors (auth.mjs)" node "$VRT/auth.test.mjs" "$VRSRC"
   check "judge calibration: scoring and case labels (judge/score.mjs)" node "$VRT/judge/score.test.mjs"
   check "--discover link rules: normalising, skips, sitemap, new paths (links.mjs)"      node "$VRT/links.test.mjs" "$VRSRC"
   check "the shipped pages.json resolves to desktop, tablet and mobile for /" bash -c "cd '$VRSRC' && node -e \"import('./config.mjs').then(m=>{const t=m.resolveTargets(JSON.parse(require('fs').readFileSync('pages.json')));if(t.map(x=>x.viewport).join()!=='desktop,tablet,mobile')process.exit(1)})\""
@@ -159,7 +160,7 @@ else
 
     vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
       local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
-      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,report.py,html_report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,links.mjs,report.py,html_report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
       cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
       echo "$d"
     }
@@ -385,6 +386,61 @@ else
     check "an unreadable judge reply still writes a report with the reply, and exits 1" t_report_on_unreadable_reply
     check "a report that cannot be written changes neither a failing nor a passing exit code" t_report_failure_is_not_fatal
     check "a changed file the judge gave no verdict for makes the report INCOMPLETE, not PASS"  t_report_incomplete
+
+    echo "-- vr.sh: pages behind a login stay away from the judge"
+    # pages.json with a login profile; the stub shoot.mjs copies whatever PNGs are in shots/, so the file names decide what is "private"
+    write_pages() { printf '%s' "{\"viewports\":{\"desktop\":{\"width\":1000,\"height\":1000}},\"auth\":{\"customer\":{\"loginUrl\":\"/login\",\"fields\":{\"#e\":\"\$USER\"},\"loggedIn\":\"#m\"${2:-}}},\"pages\":$1}" > "$R/pages.json"; }
+    private_prep() {  # a baseline of two pages ("/orders" behind a login, "/shop" public); the build under test changes both
+      reset; mkdir -p "$R/baseline"
+      png "$R" baseline/desktop__orders__0.png 1000 1000; png "$R" baseline/desktop__shop__0.png 1000 1000
+      png "$R" shots/desktop__orders__0.png 1000 1000 100,100,100,100; png "$R" shots/desktop__shop__0.png 1000 1000 100,100,100,100
+    }
+    t_private_json() {
+      private_prep; write_pages '["/shop",{"path":"/orders","auth":"customer"}]'
+      printf '[{"file":"desktop__shop__0.png","verdict":"pass","severity":0,"seen":"shop","findings":[]}]' > "$R/claude.out"
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 1 ] && [ "$(python3 -c "import json; print(json.load(open('$R/private.json')))")" = "['desktop__orders__0.png']" ]
+    }
+    t_private_not_named_to_judge() {
+      private_prep; write_pages '["/shop",{"path":"/orders","auth":"customer"}]'
+      printf '[{"file":"desktop__shop__0.png","verdict":"pass","severity":0,"seen":"shop","findings":[]}]' > "$R/claude.out"
+      vrrun "$R" >/dev/null 2>&1
+      [ "$(grep -c 'rubric.md' "$R/claude.log")" = 1 ] && grep -q 'desktop__shop__0.png' "$R/claude.log" && ! grep -q 'orders' "$R/claude.log"
+    }
+    t_private_only_no_judge() {
+      private_prep; rm -f "$R/baseline/desktop__shop__0.png" "$R/shots/desktop__shop__0.png"; write_pages '[{"path":"/orders","auth":"customer"}]'
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 1 ] && [ ! -e "$R/claude.log" ] && grep -q 'Not sent to the judge' "$R/report/index.html" && grep -q 'FAIL' "$R/report/index.html"
+    }
+    t_private_unchanged_passes() {
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/desktop__orders__0.png 1000 1000; png "$R" shots/desktop__orders__0.png 1000 1000
+      write_pages '[{"path":"/orders","auth":"customer"}]'
+      vrrun "$R" >"$WORK/vr.out" 2>&1 && grep -q 'nothing changed' "$WORK/vr.out" && [ ! -e "$R/claude.log" ] && [ "$(cat "$R/private.json")" = "[]" ]
+    }
+    t_judge_true_sends() {
+      private_prep; rm -f "$R/baseline/desktop__shop__0.png" "$R/shots/desktop__shop__0.png"; write_pages '[{"path":"/orders","auth":"customer"}]' ',"judge":true'
+      printf '[{"file":"desktop__orders__0.png","verdict":"pass","severity":1,"seen":"orders","findings":[]}]' > "$R/claude.out"
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 0 ] && grep -q 'desktop__orders__0.png' "$R/claude.log" && [ "$(cat "$R/private.json")" = "[]" ]
+    }
+    t_stale_private_removed() {
+      private_prep; write_pages '["/shop",{"path":"/orders","auth":"customer"}]'; echo '["stale"]' > "$R/private.json"
+      printf '[{"file":"desktop__shop__0.png","verdict":"pass","severity":0,"seen":"shop","findings":[]}]' > "$R/claude.out"
+      vrrun "$R" >/dev/null 2>&1; ! grep -q stale "$R/private.json"
+    }
+    check "filter.mjs lists the changed pages behind a login in private.json"      t_private_json
+    check "a page behind a login is never named to the judge; public pages still are" t_private_not_named_to_judge
+    check "only private pages changed: no judge call at all, the run fails and the report says why" t_private_only_no_judge
+    check "an unchanged private page passes without the judge"                      t_private_unchanged_passes
+    check "a profile with \"judge\": true sends its pages to the judge"             t_judge_true_sends
+    check "a stale private.json is cleared at the start of a run"                   t_stale_private_removed
+    t_login_usage() {
+      local a b
+      a=$(cd "$R" && ./vr.sh --login 2>&1; echo "rc=$?"); b=$(cd "$R" && ./vr.sh --login customer 2>&1; echo "rc=$?")
+      echo "$a" | grep -q 'usage: vr.sh --login <profile> \[--manual\] <base-url>' && echo "$a" | grep -q 'rc=2' && echo "$b" | grep -q 'rc=2'
+    }
+    check "vr.sh --login with a missing profile or URL prints usage and exits 2"    t_login_usage
+    write_pages '["/"]' >/dev/null 2>&1; cp "$VRSRC/pages.json" "$R/pages.json"
 
     stale_files_removed() { prep; echo stale > "$R/report.json"; echo stale > "$R/raw_report.txt"; printf 'no json' > "$R/claude.out"; vrrun "$R" >/dev/null 2>&1; [ ! -f "$R/report.json" ] && grep -q "no json" "$R/raw_report.txt" && ! grep -q stale "$R/raw_report.txt"; }
     check "a stale report.json is removed when a run fails to parse" stale_files_removed
