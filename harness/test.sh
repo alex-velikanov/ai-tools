@@ -441,6 +441,41 @@ else
     check "a page behind a login goes to the judge like any other (the default), and its verdict decides" t_default_sends
     check "a profile with \"judge\": true sends its pages to the judge"             t_judge_true_sends
     check "a stale private.json is cleared at the start of a run"                   t_stale_private_removed
+    # A baseline screenshot whose page is gone (renamed, removed) cannot be known to be private, so it goes to the judge even if the
+    # page opted out. When a profile opts out (judge: false) the run warns about each such file; it never changes the exit code.
+    orphan_prep() {  # baseline: orders (still a page) and oldname (renamed away); the build under test only has orders
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/desktop__orders__0.png 1000 1000; png "$R" baseline/desktop__oldname__0.png 1000 1000
+      png "$R" shots/desktop__orders__0.png 1000 1000
+      printf '[{"file":"desktop__oldname__0.png","verdict":"pass","severity":0,"seen":"the old page","findings":[]}]' > "$R/claude.out"
+    }
+    t_orphan_warns() {
+      orphan_prep; write_pages '[{"path":"/orders","auth":"customer"}]'; echo '["stale.png"]' > "$R/orphans.json"
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 0 ] && [ "$(python3 -c "import json; print(json.load(open('$R/orphans.json')))")" = "['desktop__oldname__0.png']" ] \
+        && grep -q 'WARNING desktop__oldname__0.png: This baseline screenshot belongs to no page in pages.json any more' "$WORK/vr.out" \
+        && grep -q 'belongs to no page in pages.json any more' "$R/report/index.html" \
+        && grep -q 'desktop__oldname__0.png' "$R/claude.log"      # it did go to the judge: that is the leak the warning is about
+    }
+    t_orphan_silent_without_opt_out() {
+      orphan_prep; write_pages '[{"path":"/orders","auth":"customer"}]' ' '
+      vrrun "$R" >"$WORK/vr.out" 2>&1; local rc=$?
+      [ $rc = 0 ] && [ "$(cat "$R/orphans.json")" = "[]" ] && ! grep -q 'belongs to no page' "$WORK/vr.out"
+    }
+    t_orphan_silent_for_a_current_page() {   # a page that got shorter loses a tile: that tile still belongs to a page
+      reset; mkdir -p "$R/baseline"; png "$R" baseline/desktop__orders__0.png 1000 1000; png "$R" baseline/desktop__orders__1.png 1000 1000
+      png "$R" shots/desktop__orders__0.png 1000 1000
+      printf '[{"file":"desktop__orders__1.png","verdict":"pass","severity":0,"seen":"gone","findings":[]}]' > "$R/claude.out"
+      write_pages '[{"path":"/orders","auth":"customer"}]'
+      vrrun "$R" >"$WORK/vr.out" 2>&1; [ "$(cat "$R/orphans.json")" = "[]" ] && ! grep -q 'belongs to no page' "$WORK/vr.out"
+    }
+    t_orphan_silent_with_no_logins() {
+      orphan_prep; cp "$VRSRC/pages.json" "$R/pages.json"
+      vrrun "$R" >"$WORK/vr.out" 2>&1; [ "$(cat "$R/orphans.json")" = "[]" ] && ! grep -q 'belongs to no page' "$WORK/vr.out"
+    }
+    check "a baseline screenshot whose page is gone gets a warning when a profile opts out (and the run still passes)" t_orphan_warns
+    check "no warning when no profile opts out of the judge"                          t_orphan_silent_without_opt_out
+    check "no warning for a tile that still belongs to a current page"               t_orphan_silent_for_a_current_page
+    check "no warning in a project with no logins"                                   t_orphan_silent_with_no_logins
     t_login_usage() {
       local a b
       a=$(cd "$R" && ./vr.sh --login 2>&1; echo "rc=$?"); b=$(cd "$R" && ./vr.sh --login customer 2>&1; echo "rc=$?")

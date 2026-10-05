@@ -343,6 +343,8 @@ Per-page options for content that would otherwise cause false alarms or missed p
 | `"mask": [".timestamp", "#ad"]` | paint over those elements in every screenshot |
 | `"expectStatus": 404` | the status the page should return; by default any status of 400 or above fails the run |
 | `"auth": "customer"` | shoot this page logged in, as that login profile (see **Pages behind a login** below) |
+| `"name": "cart-open"` | a name for this screenshot, used in its file name (default: made from the path). The same path can be listed more than once under different names |
+| `"steps": [...]` | actions to run before the screenshot, to reach a state (see **States** below) |
 | `"maxTiles": 8` | allow a taller page. Pages need one screenshot per viewport-height, and more than 6 is an error, not a silent truncation. Set `"maxTiles"` at the top level to change it for every page |
 
 **Pages behind a login.** Define a login profile at the top level of `pages.json`, then name it on the pages that need it:
@@ -366,7 +368,32 @@ Per-page options for content that would otherwise cause false alarms or missed p
   profile must not be seen by the AI judge, add `"judge": false`: its pages are then compared as pixels only, and a changed one fails
   the run (the report says it was not judged), because nothing else can vouch for it. The `baseline/`, `current/` and `report/` folders
   hold logged-in pages: do not publish them.
+- **Renaming or removing a page with `"judge": false`:** the old baseline file then belongs to no page in `pages.json`, so the tool can no
+  longer tell it was private, and it is shown to the judge as a page that disappeared. When any profile opts out, the run prints a warning
+  for each such file (and lists it in the report); re-record the baseline after renaming or removing a page. The warning never changes the
+  exit code.
 - A session is a live login. Do not commit it, paste it in a ticket, or leave it in a shared CI artifact.
+
+**States.** A page that looks different after an action (a menu open, a dialog, a form with an error, a cart with an item) is its own
+screenshot: list the same path again with a `name` and `steps`.
+
+```json
+{ "pages": ["/",
+            { "path": "/", "name": "menu-open",   "steps": [{ "hover": "#products" }] },
+            { "path": "/signup", "name": "signup-error", "steps": [{ "fill": { "selector": "#email", "value": "not-an-email" } },
+                                                                 { "click": "button[type=submit]" }, { "waitFor": ".field-error" }] }] }
+```
+
+- **Steps** run after the page loads and before the screenshot, in order. One action each: `click`, `hover`, `waitFor` (a selector),
+  `press` (a key such as `"Enter"`, sent to the focused element), `wait` (milliseconds, at most 10000; prefer `waitFor`), `fill` and
+  `select` (`{ "selector": "...", "value": "..." }`). At most 20 per page. `mask` and the page's own `waitFor` still apply afterwards.
+- **A state that cannot be reached is a failure**, not a screenshot of the wrong thing: if a step cannot run (the button is gone), the run
+  stops and says which step (`step 2 (click "#cart") failed`). It never prints what you typed. `VR_STEP_TIMEOUT_MS` (default 10000) sets
+  how long a step waits.
+- **Each page with steps gets a fresh browser**, so what its steps change (a cart, a dismissed banner) cannot leak into the next page.
+- **Names** become part of the file name (`desktop__menu-open__0.png`), so use letters, digits, `-` and `_`. Two pages cannot share a
+  name for the same viewport. This is also how you shoot one path both logged out and logged in: list it twice, the second with
+  `"auth": "customer"` and its own `name`.
 
 The list is the test, not a crawl: only the pages you list are compared, so a broken nav link cannot make a page
 quietly drop out of the check. To find pages you forgot, run `vr/vr.sh --discover http://localhost:5173`. It follows
