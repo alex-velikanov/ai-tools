@@ -76,7 +76,8 @@ tests this against a local fixture repository, so it needs no network:
 - `--web` installs the pinned release: `vr.sh` is executable, `.vr-version` is the tag, and the release's tests, CI files and git data are not installed.
 - Re-running changes nothing. A newer pin alone does not touch `vr/` (the files are kept and the way to update is shown);
   `--update-vr` moves it to the new release, replaces local edits to the tool, adds new files, removes files retired from the previous
-  release, and keeps your `pages.json`, `rubric.md`, and extra project files. Cleanup uses the tag recorded in `.vr-version`; that tag
+  release, and keeps your `pages.json`, `rubric.md`, and extra project files (an extra file whose path the new release starts to use is
+  replaced by the release's file). Cleanup uses the tag recorded in `.vr-version`; that tag
   must still be available. Unversioned installations keep files whose release ownership is unknown.
 - A missing tag or an unreachable repository stops the run with a clear message before anything is written; without `--web` nothing is
   fetched; `--dry-run` installs no vr. `VR_REPO_URL` and `VR_VERSION` override the repository and the tag.
