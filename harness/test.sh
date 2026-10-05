@@ -160,7 +160,7 @@ else
 
     vrdir() {  # vrdir <name>: a fresh copy of the vr tool with shoot.mjs and claude stubbed; prints its path
       local d="$WORK/vr-$1"; mkdir -p "$d/shots" "$d/bin"
-      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,links.mjs,report.py,html_report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
+      cp "$VRSRC"/{vr.sh,filter.mjs,config.mjs,links.mjs,paths.mjs,report.py,html_report.py,rubric.md,pages.json} "$d/"; cp "$VRT/stub-shoot.mjs" "$d/shoot.mjs"; cp "$VRT/png.mjs" "$d/"
       cp "$VRT/claude" "$d/bin/"; ln -s "$VRDEPS/node_modules" "$d/node_modules"; echo '[]' > "$d/claude.out"
       echo "$d"
     }
@@ -476,6 +476,58 @@ else
     check "no warning when no profile opts out of the judge"                          t_orphan_silent_without_opt_out
     check "no warning for a tile that still belongs to a current page"               t_orphan_silent_for_a_current_page
     check "no warning in a project with no logins"                                   t_orphan_silent_with_no_logins
+    # The tool's code in one folder and a project's data in another (VR_DATA). The code folder holds a pages.json that must never be
+    # used and is checked for being left exactly as it was: every file the run makes belongs in the data folder.
+    split_setup() {  # sets T (code) and D (data); D's pages.json has a page behind a login whose profile opts out of the judge
+      T="$(vrdir split-tool)"; echo '["/from-the-tool-folder"]' > "$T/pages.json"
+      D="$WORK/vr-split-data"; rm -rf "$D"; mkdir -p "$D/shots"
+      printf '%s' "{\"viewports\":{\"desktop\":{\"width\":1000,\"height\":1000}},\"auth\":{\"customer\":{\"loginUrl\":\"/login\",\"fields\":{\"#e\":\"\$USER\"},\"loggedIn\":\"#m\",\"judge\":false}},\"pages\":[\"/shop\",{\"path\":\"/orders\",\"auth\":\"customer\"}]}" > "$D/pages.json"
+      png "$T" "$D/shots/desktop__shop__0.png" 1000 1000; png "$T" "$D/shots/desktop__orders__0.png" 1000 1000
+      echo '[]' > "$D/claude.out"
+    }
+    splitrun() { (cd "$D" && VR_DATA="$D" SHOTS="$D/shots" CLAUDE_STUB_LOG="$D/claude.log" CLAUDE_STUB_OUT="$D/claude.out" PATH="$T/bin:$PATH" "$T/vr.sh" "$@"); }
+    tool_listing() { (cd "$T" && ls -A | sort | tr '\n' ' '); }
+    t_split_layout() {
+      split_setup; local before; before="$(tool_listing)"
+      splitrun --record http://stub >"$WORK/vr.out" 2>&1 || return 1
+      [ -f "$D/baseline/desktop__orders__0.png" ] && [ ! -e "$T/baseline" ] || return 1
+      png "$T" "$D/shots/desktop__orders__0.png" 1000 1000 100,100,100,100; png "$T" "$D/shots/desktop__shop__0.png" 1000 1000 100,100,100,100
+      printf '[{"file":"desktop__shop__0.png","verdict":"pass","severity":0,"seen":"shop","findings":[]}]' > "$D/claude.out"
+      splitrun http://stub >"$WORK/vr.out" 2>&1; local rc=$?
+      # the private page changed (rc 1), and private.json is the one in D's pages.json (the code folder's has no login at all)
+      [ $rc = 1 ] && [ "$(python3 -c "import json; print(json.load(open('$D/private.json')))")" = "['desktop__orders__0.png']" ] || return 1
+      for f in report/index.html report.json warnings.json changed.json current/desktop__shop__0.png; do [ -e "$D/$f" ] || return 1; done
+      [ "$(tool_listing)" = "$before" ]
+    }
+    t_split_rubric() {
+      split_setup; splitrun --record http://stub >/dev/null 2>&1
+      png "$T" "$D/shots/desktop__shop__0.png" 1000 1000 100,100,100,100
+      printf '[{"file":"desktop__shop__0.png","verdict":"pass","severity":0,"seen":"shop","findings":[]}]' > "$D/claude.out"
+      splitrun http://stub >/dev/null 2>&1
+      grep -q "Read $T/rubric.md" "$D/claude.log" || return 1                  # no rubric in the data folder: the tool's is used, by its full path
+      echo "my own rules" > "$D/rubric.md"; rm -f "$D/claude.log" "$D/claude.log.calls"
+      splitrun http://stub >/dev/null 2>&1
+      grep -q "Read rubric.md" "$D/claude.log" && ! grep -q "$T/rubric.md" "$D/claude.log"      # the project's own rubric wins
+    }
+    t_split_errors() {
+      split_setup
+      local rc1 rc2 rc3 out
+      out=$(cd "$D" && VR_DATA="$WORK/no-such-folder" "$T/vr.sh" http://stub 2>&1); rc1=$?
+      echo "$out" | grep -q 'VR_DATA is not a folder' || return 1
+      rm "$D/pages.json"; out=$(cd "$D" && VR_DATA="$D" "$T/vr.sh" --record http://stub 2>&1); rc2=$?
+      echo "$out" | grep -q "No pages.json in $D" || return 1
+      out=$(cd "$D" && VR_DATA="$D" "$T/vr.sh" 2>&1); rc3=$?                   # usage still wins over a missing pages.json
+      echo "$out" | grep -q 'usage:' && [ $rc1 = 2 ] && [ $rc2 = 2 ] && [ $rc3 = 2 ]
+    }
+    t_split_relative_data() {   # a relative VR_DATA works from wherever the script is run
+      split_setup
+      (cd "$WORK" && VR_DATA="vr-split-data" SHOTS="$D/shots" CLAUDE_STUB_LOG="$D/claude.log" CLAUDE_STUB_OUT="$D/claude.out" PATH="$T/bin:$PATH" "$T/vr.sh" --record http://stub >/dev/null 2>&1) \
+        && [ -f "$D/baseline/desktop__shop__0.png" ] && [ ! -e "$WORK/baseline" ]
+    }
+    check "code and data in separate folders: everything the run makes is in the data folder, its pages.json is used, the code folder is untouched" t_split_layout
+    check "split folders: the tool's rubric is used by full path unless the project has its own"  t_split_rubric
+    check "split folders: a missing VR_DATA folder or pages.json is a clear exit 2, and usage still wins" t_split_errors
+    check "split folders: a relative VR_DATA works from any folder"                              t_split_relative_data
     t_login_usage() {
       local a b
       a=$(cd "$R" && ./vr.sh --login 2>&1; echo "rc=$?"); b=$(cd "$R" && ./vr.sh --login customer 2>&1; echo "rc=$?")

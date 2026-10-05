@@ -82,6 +82,9 @@ binary, or run `npx playwright install chromium`). Runs the real `shoot.mjs`, `d
   variable fails clearly, `VR_<PROFILE>_STATE` works as JSON or a path, `--manual` waits for the `loggedIn` marker; and pages behind a
   login go to the judge like any other, and are kept away from it (a changed one then fails the run) only when the profile says `"judge": false`; with such a profile, a baseline
   screenshot whose page was renamed or removed gets a warning (it can no longer be known to be private).
+- Code and data apart (`VR_DATA`): login, record, compare and discover run with the tool's folder and the project's folder different; the
+  project's `pages.json` is the one used, every file the run makes is in the project's folder, the tool's folder is left exactly as it was,
+  the tool's rubric is used unless the project has its own, and a missing folder or `pages.json` is a clear error.
 - Steps and names: click, hover, fill then press Enter, select and waitFor reach a state (a dialog, a menu, a search result) that looks
   the same as a page where that state is already shown; a step that cannot run stops the run, names the step and never prints what was
   typed; what one page's steps change does not leak into the next page; the same path can be shot twice under different names (logged
