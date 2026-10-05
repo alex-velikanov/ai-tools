@@ -142,7 +142,10 @@ apply_tree() {
 # and VR_COMMIT override the defaults, for tests and for trying a newer release.
 VR_REPO_URL="${VR_REPO_URL:-https://github.com/alex-velikanov/visual-regressions}"
 if [ -n "${VR_VERSION:-}" ]; then VR_TAG="$VR_VERSION"; VR_COMMIT="${VR_COMMIT:-}"
-else read -r VR_TAG VR_COMMIT _ < "$HARNESS_DIR/VR_VERSION" || true; fi
+else
+  read -r VR_TAG VR_DEFAULT_COMMIT _ < "$HARNESS_DIR/VR_VERSION" || true
+  VR_COMMIT="${VR_COMMIT-${VR_DEFAULT_COMMIT:-}}"
+fi
 VR_TREE=""; VR_PREVIOUS_TREE=""
 # read_vr_version <file> sets VR_HAD_TAG and VR_HAD_COMMIT; the commit is empty in a marker written before pins carried one.
 read_vr_version() { VR_HAD_TAG=""; VR_HAD_COMMIT=""; if [ -f "$1" ]; then read -r VR_HAD_TAG VR_HAD_COMMIT _ < "$1" || true; fi; }
@@ -174,11 +177,20 @@ if [ "$WEB" = 1 ]; then
   printf '%s %s\n' "$VR_TAG" "$VR_COMMIT" > "$VR_TREE/.vr-version"
   # Resolve previous ownership before writing anything; never infer it from project files. The previous release is trusted only if its
   # tag still points at the commit recorded when it was installed (a marker without a commit, from before pins carried one, is taken by tag).
+  # For an explicit same-tag update, resolve the recorded commit itself because the tag now names the new release.
   read_vr_version "$TARGET/vr/.vr-version"
-  if [ "$UPDATE_VR" = 1 ] && [ -n "$VR_HAD_TAG" ] && [ "$VR_HAD_TAG" != "$VR_TAG" ]; then
+  if [ "$UPDATE_VR" = 1 ] && [ -n "$VR_HAD_TAG" ] && { [ "$VR_HAD_TAG" != "$VR_TAG" ] || { [ -n "$VR_HAD_COMMIT" ] && [ "$VR_HAD_COMMIT" != "$VR_COMMIT" ]; }; }; then
     if ! git clone -q --depth 1 --branch "$VR_HAD_TAG" "$VR_REPO_URL" "$TMP/vr-previous-src" 2>"$TMP/vr-previous-clone.log"; then
       echo "error: could not fetch previous vr $VR_HAD_TAG from $VR_REPO_URL to identify retired tool files. Nothing was written." >&2
       exit 1
+    fi
+    if [ "$VR_HAD_TAG" = "$VR_TAG" ]; then
+      if ! [[ "$VR_HAD_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
+         ! git -C "$TMP/vr-previous-src" fetch -q --depth 1 origin "$VR_HAD_COMMIT" 2>"$TMP/vr-previous-fetch.log" ||
+         ! git -C "$TMP/vr-previous-src" checkout -q --detach "$VR_HAD_COMMIT" 2>>"$TMP/vr-previous-fetch.log"; then
+        echo "error: could not resolve previous vr $VR_HAD_TAG at commit $VR_HAD_COMMIT to identify retired tool files. Nothing was written." >&2
+        exit 1
+      fi
     fi
     if [ -n "$VR_HAD_COMMIT" ] && [ "$(git -C "$TMP/vr-previous-src" rev-parse HEAD)" != "$VR_HAD_COMMIT" ]; then
       echo "error: previous vr $VR_HAD_TAG was installed at commit $VR_HAD_COMMIT but the tag now points elsewhere, so the files it owned cannot be trusted. Nothing was written." >&2

@@ -236,6 +236,9 @@ check "VR_VERSION without VR_COMMIT is refused with the way to look the commit u
 Q="$(vrproj short-commit)"; VR_VERSION="$VRTAG2" VR_COMMIT="${VRCOMMIT2:0:7}" boot_vr "$Q" --web; RC=$?
 check "a commit that is not the full 40 hex characters is refused" bash -c "[ '$RC' -eq 2 ] && grep -q '40-character' '$WORK/vrboot.log' && [ -z \"\$(ls -A '$Q')\" ]"
 
+Q="$(vrproj commit-only)"; ( unset VR_VERSION; boot_vr "$Q" --web ); RC=$?
+check "VR_COMMIT alone overrides the default commit while using the default tag" bash -c "[ '$RC' -eq 0 ] && [ \"\$(cat '$Q/vr/.vr-version')\" = '$VRTAG $VRCOMMIT' ]"
+
 # one tag, moved after it was installed: the same tag at another commit is another release
 gitc "$VRFIX" tag v9.9.7-moved "$VRCOMMIT"
 M="$(vrproj moved-after-install)"; VR_VERSION=v9.9.7-moved VR_COMMIT="$VRCOMMIT" boot_vr "$M" --web
@@ -245,6 +248,15 @@ vr_same_tag_other_commit_left_whole() { grep -q "run again with --update-vr" "$W
 check "the same tag at another commit is another release: vr/ is left whole without --update-vr" vr_same_tag_other_commit_left_whole
 VR_VERSION=v9.9.7-moved VR_COMMIT="$VRCOMMIT2" boot_vr "$M" --web --update-vr
 check "--update-vr moves vr/ to the same tag at its new commit" bash -c "[ \"\$(cat '$M/vr/.vr-version')\" = 'v9.9.7-moved $VRCOMMIT2' ] && [ \"\$(cat '$M/vr/marker')\" = two ]"
+
+check "same-tag --update-vr removes retired release files" test ! -e "$M/vr/retired tools/old helper.mjs"
+
+# A recorded commit that cannot be fetched must not allow a partial same-tag update.
+Q="$(vrproj same-tag-missing-commit)"; boot_vr "$Q" --web
+printf '%s %s\n' "$VRTAG" 0000000000000000000000000000000000000000 > "$Q/vr/.vr-version"
+cp -R "$Q" "$WORK/before-same-tag-missing-commit"
+boot_vr "$Q" --web --update-vr --force; RC=$?
+check "same-tag update with an unavailable recorded commit fails before writing project files" bash -c "[ '$RC' -eq 1 ] && grep -q 'could not resolve previous vr' '$WORK/vrboot.log' && diff -r '$WORK/before-same-tag-missing-commit' '$Q'"
 
 # the previous release is trusted only while its tag still points at the commit recorded at install time
 gitc "$VRFIX" tag v9.9.6-prev "$VRCOMMIT"
