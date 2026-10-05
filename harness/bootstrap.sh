@@ -159,10 +159,23 @@ fi
 apply_vr() {
   local f rel keep="$FORCE" had=""
   [ -f "$TARGET/vr/.vr-version" ] && had="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
+  # Check the whole unversioned installation before adding any release files or its version marker.
+  if [ -d "$TARGET/vr" ] && [ ! -e "$TARGET/vr/.vr-version" ] && [ "$UPDATE_VR" != 1 ]; then
+    while IFS= read -r f; do
+      rel="${f#$VR_TREE/}"
+      case "$rel" in .vr-version|pages.json|rubric.md) continue ;; esac
+      if [ -e "$TARGET/vr/$rel" ] && ! cmp -s "$f" "$TARGET/vr/$rel"; then
+        log note "vr/ has differing tool files and no .vr-version; left unchanged: run again with --update-vr to move it to $VR_TAG"
+        return 0
+      fi
+    done < <(find "$VR_TREE" -type f | sort)
+  fi
   while IFS= read -r f; do
     rel="${f#$VR_TREE/}"
     FORCE="$keep"
-    if [ "$UPDATE_VR" = 1 ] && [ "$rel" != pages.json ] && [ "$rel" != rubric.md ]; then FORCE=1; fi
+    if [ "$UPDATE_VR" = 1 ]; then
+      case "$rel" in pages.json|rubric.md) FORCE=0 ;; *) FORCE=1 ;; esac
+    fi
     if [ -x "$f" ]; then put "$f" "vr/$rel" x; else put "$f" "vr/$rel"; fi
   done < <(find "$VR_TREE" -type f | sort)
   FORCE="$keep"

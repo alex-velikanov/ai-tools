@@ -166,6 +166,39 @@ vr_updated() { [ "$(cat "$P/vr/.vr-version")" = "$VRTAG2" ] && [ "$(cat "$P/vr/m
 check "--update-vr moves vr/ to the new release (changed and new files, a local edit to the tool is replaced)" vr_updated
 vr_project_files_kept() { [ "$(cat "$P/vr/pages.json")" = '{"pages":["/mine"]}' ] && [ "$(cat "$P/vr/rubric.md")" = "# my rubric" ]; }
 check "--update-vr keeps the project's own pages.json and rubric.md" vr_project_files_kept
+echo "local edit" >> "$P/vr/auth.mjs"; echo "# local notes" > "$P/AGENTS.md"
+VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --force
+check "--update-vr with --force keeps pages.json and rubric.md" vr_project_files_kept
+check "--update-vr with --force replaces tool files" vr_updated
+check "--force still replaces other harness files after vr" bash -c "! grep -q 'local notes' '$P/AGENTS.md'"
+boot_vr "$P" --web --force
+check "--force without --update-vr still replaces project files" bash -c "cmp -s '$VRFIX/pages.json' '$P/vr/pages.json' && cmp -s '$VRFIX/rubric.md' '$P/vr/rubric.md'"
+
+vr_unversioned_kept() {
+  local flag="$1" dir
+  dir="$(vrproj "unversioned-$flag")"
+  boot_vr "$dir" --web || return 1
+  rm "$dir/vr/.vr-version" "$dir/vr/README.md"
+  echo "local edit" >> "$dir/vr/vr.sh"
+  cp -R "$dir/vr" "$dir/before"
+  local args=(); [ "$flag" = plain ] || args+=("--$flag")
+  VR_VERSION="$VRTAG2" boot_vr "$dir" --web "${args[@]}" || return 1
+  diff -r "$dir/before" "$dir/vr" && grep -q 'run again with --update-vr' "$WORK/vrboot.log"
+}
+for flag in plain force dry-run; do
+  check "unversioned differing vr stays unchanged ($flag), including missing files and version marker" vr_unversioned_kept "$flag"
+done
+P="$(vrproj migrate)"; boot_vr "$P" --web
+rm "$P/vr/.vr-version"
+echo '{"pages":["/mine"]}' > "$P/vr/pages.json"; echo "# my rubric" > "$P/vr/rubric.md"
+echo "local edit" >> "$P/vr/auth.mjs"
+VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --force
+check "--update-vr migrates an unversioned installation" vr_updated
+check "unversioned migration with --force preserves project files" vr_project_files_kept
+rm "$P/vr/.vr-version" "$P/vr/README.md"
+VR_VERSION="$VRTAG2" boot_vr "$P" --web
+check "matching unversioned tools can gain missing release files and a version marker" bash -c "[ -f '$P/vr/README.md' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG2' ]"
+check "custom project files alone do not block adopting a version" vr_project_files_kept
 Q="$(vrproj bad)"; VR_VERSION=no-such-tag boot_vr "$Q" --web; RC=$?
 vr_bad_tag() { [ "$RC" -eq 1 ] && ! grep -qE "^(tar|fatal: cannot change)" "$WORK/vrboot.log" && grep -q "could not fetch vr no-such-tag" "$WORK/vrboot.log" && grep -q "VR_REPO_URL" "$WORK/vrboot.log" && [ -z "$(ls -A "$Q")" ]; }
 check "a missing tag stops the run with a clear message and writes nothing" vr_bad_tag
