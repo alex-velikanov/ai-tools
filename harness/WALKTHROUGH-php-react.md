@@ -357,7 +357,7 @@ Per-page options for content that would otherwise cause false alarms or missed p
 ```
 
 - **Log in once:** `VR_CUSTOMER_USER=... VR_CUSTOMER_PASSWORD=... vr/vr.sh --login customer <base-url>` fills the form and saves the
-  session to `vr/.auth/customer.json` (gitignored, readable only by you). Credentials are only ever read from the environment: a field
+  session to `vr/.auth/customer.json` (readable only by you, and ignored by git: the folder holds its own `.gitignore`, wherever `VR_DATA` is). Credentials are only ever read from the environment: a field
   value must be a `$NAME` reference (`$USER` means `VR_CUSTOMER_USER`), and `pages.json` is rejected if it holds anything else.
   For SSO, MFA or a captcha use `--manual`: a browser window opens, you log in, and the session is saved when `loggedIn` appears
   (it needs a display, so do it on your own machine). In CI, put the session (the JSON, or a path to it) in `VR_CUSTOMER_STATE`.

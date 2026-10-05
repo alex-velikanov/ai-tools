@@ -18,6 +18,7 @@
 #
 # Run the fast tier after ANY change to bootstrap.sh, core/, modules/ or skills/. Run full before relying on changes.
 set -uo pipefail
+unset VR_DATA      # a caller's VR_DATA may be a real project's data folder, and the fixtures' --record would replace its baseline
 HARNESS="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HARNESS/.." && pwd)"
 TIER=fast; WITH_LLM=0; KEEP=0; UPDATE=0
