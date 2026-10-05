@@ -140,7 +140,10 @@ apply_tree() {
 # VR_REPO_URL (a URL or a local path) and VR_VERSION (a tag) override the defaults, for tests and for trying a newer release.
 VR_REPO_URL="${VR_REPO_URL:-https://github.com/alex-velikanov/visual-regressions}"
 VR_TAG="${VR_VERSION:-$(tr -d '[:space:]' < "$HARNESS_DIR/VR_VERSION")}"
-VR_TREE=""
+VR_TREE=""; VR_PREVIOUS_TREE=""
+archive_vr() {
+  git -C "$1" archive HEAD -- . ':(exclude)tests' ':(exclude)test.sh' ':(exclude).github' ':(exclude).gitignore' ':(exclude)CLAUDE.md' | tar -x -C "$2"
+}
 if [ "$WEB" = 1 ]; then
   VR_TREE="$TMP/vr-tool"
   if ! git clone -q --depth 1 --branch "$VR_TAG" "$VR_REPO_URL" "$TMP/vr-src" 2>"$TMP/vr-clone.log"; then
@@ -150,12 +153,25 @@ if [ "$WEB" = 1 ]; then
     exit 1
   fi
   mkdir -p "$VR_TREE"
-  git -C "$TMP/vr-src" archive HEAD -- . ':(exclude)tests' ':(exclude)test.sh' ':(exclude).github' ':(exclude).gitignore' ':(exclude)CLAUDE.md' | tar -x -C "$VR_TREE"
+  archive_vr "$TMP/vr-src" "$VR_TREE"
   printf '%s\n' "$VR_TAG" > "$VR_TREE/.vr-version"
+  # Resolve previous ownership before writing anything; never infer it from project files.
+  if [ "$UPDATE_VR" = 1 ] && [ -f "$TARGET/vr/.vr-version" ]; then
+    VR_PREVIOUS_TAG="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
+    if [ -n "$VR_PREVIOUS_TAG" ] && [ "$VR_PREVIOUS_TAG" != "$VR_TAG" ]; then
+      if ! git clone -q --depth 1 --branch "$VR_PREVIOUS_TAG" "$VR_REPO_URL" "$TMP/vr-previous-src" 2>"$TMP/vr-previous-clone.log"; then
+        echo "error: could not fetch previous vr $VR_PREVIOUS_TAG from $VR_REPO_URL to identify retired tool files. Nothing was written." >&2
+        exit 1
+      fi
+      VR_PREVIOUS_TREE="$TMP/vr-previous-tool"
+      mkdir -p "$VR_PREVIOUS_TREE"
+      archive_vr "$TMP/vr-previous-src" "$VR_PREVIOUS_TREE"
+    fi
+  fi
 fi
 
 # apply_vr — vr/ gets the release's files. Like everything else a differing file is kept unless --force; --update-vr replaces the
-# tool's own files and still keeps pages.json and rubric.md, which are the project's.
+# tool's own files, removes retired release files, and keeps pages.json and rubric.md, which are the project's.
 apply_vr() {
   local f rel keep="$FORCE" had=""
   [ -f "$TARGET/vr/.vr-version" ] && had="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
@@ -174,6 +190,16 @@ apply_vr() {
         return 0
       fi
     done < <(find "$VR_TREE" -type f | sort)
+  fi
+  if [ "$UPDATE_VR" = 1 ] && [ -n "$VR_PREVIOUS_TREE" ]; then
+    while IFS= read -r -d '' f; do
+      rel="${f#$VR_PREVIOUS_TREE/}"
+      case "$rel" in pages.json|rubric.md) continue ;; esac
+      if [ ! -e "$VR_TREE/$rel" ] && [ ! -L "$VR_TREE/$rel" ] && { [ -f "$TARGET/vr/$rel" ] || [ -L "$TARGET/vr/$rel" ]; }; then
+        log removed "vr/$rel"
+        [ "$DRY" = 1 ] || rm -f -- "$TARGET/vr/$rel"
+      fi
+    done < <(find "$VR_PREVIOUS_TREE" -type f -print0)
   fi
   while IFS= read -r f; do
     rel="${f#$VR_TREE/}"

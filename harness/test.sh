@@ -53,8 +53,11 @@ echo one > "$VRFIX/marker"; echo '{"pages":["/"]}' > "$VRFIX/pages.json"; echo "
 echo '{"name":"fixture"}' > "$VRFIX/package.json"; echo "# fixture" > "$VRFIX/README.md"; echo "export const a = 1;" > "$VRFIX/auth.mjs"
 echo "test" > "$VRFIX/tests/x.test.mjs"; echo "test" > "$VRFIX/test.sh"; echo "ci" > "$VRFIX/.github/workflows/test.yml"
 echo "claude" > "$VRFIX/CLAUDE.md"; echo "node_modules/" > "$VRFIX/.gitignore"
+mkdir -p "$VRFIX/retired tools"
+echo retired > "$VRFIX/retired tools/old helper.mjs"
 git -C "$VRFIX" init -q -b main && gitc "$VRFIX" add -A && gitc "$VRFIX" commit -q -m one && gitc "$VRFIX" tag "$VRTAG"
 echo two > "$VRFIX/marker"; echo "export const a = 2;" > "$VRFIX/auth.mjs"; echo "export const b = 1;" > "$VRFIX/added-later.mjs"
+rm "$VRFIX/retired tools/old helper.mjs"
 gitc "$VRFIX" add -A && gitc "$VRFIX" commit -q -m two && gitc "$VRFIX" tag "$VRTAG2"
 export VR_REPO_URL="$VRFIX"      # every bootstrap in these tests fetches vr from the fixture
 unset VR_VERSION
@@ -158,12 +161,21 @@ vr_only_the_tool() { for f in tests test.sh .github CLAUDE.md .gitignore .git; d
 check "the release's tests, CI files and git data are not installed" vr_only_the_tool
 check "re-run changes nothing" bash -c "'$HARNESS/bootstrap.sh' '$P' --web | grep -q 'Summary: 0 created, 0 merged'"
 echo '{"pages":["/mine"]}' > "$P/vr/pages.json"; echo "# my rubric" > "$P/vr/rubric.md"; echo "local edit" >> "$P/vr/auth.mjs"
+echo "local edit" >> "$P/vr/retired tools/old helper.mjs"
+echo custom > "$P/vr/retired tools/custom.mjs"
+mkdir -p "$P/vr/tests"; echo custom > "$P/vr/tests/x.test.mjs"
 VR_VERSION="$VRTAG2" boot_vr "$P" --web
 vr_pin_moved_without_flag() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG" ] && [ "$(cat "$P/vr/marker")" = one ] && grep -q "local edit" "$P/vr/auth.mjs" && [ ! -e "$P/vr/added-later.mjs" ]; }
 check "a newer pin alone leaves vr/ whole (nothing replaced, no new files from the newer release) and shows the way to update" vr_pin_moved_without_flag
+check "a newer pin alone keeps retired release files" test -f "$P/vr/retired tools/old helper.mjs"
+cp -R "$P/vr" "$WORK/vr-before-update"
+VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --dry-run
+check "update dry-run reports retired files and leaves vr unchanged" bash -c "diff -r '$WORK/vr-before-update' '$P/vr' && grep -q 'removed.*vr/retired tools/old helper.mjs' '$WORK/vrboot.log'"
 VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr
 vr_updated() { [ "$(cat "$P/vr/.vr-version")" = "$VRTAG2" ] && [ "$(cat "$P/vr/marker")" = two ] && [ -f "$P/vr/added-later.mjs" ] && ! grep -q "local edit" "$P/vr/auth.mjs"; }
 check "--update-vr moves vr/ to the new release (changed and new files, a local edit to the tool is replaced)" vr_updated
+check "--update-vr removes retired release files even with local edits" test ! -e "$P/vr/retired tools/old helper.mjs"
+check "--update-vr preserves extra project files and excluded release paths" bash -c "[ \"\$(cat '$P/vr/retired tools/custom.mjs')\" = custom ] && [ \"\$(cat '$P/vr/tests/x.test.mjs')\" = custom ]"
 vr_project_files_kept() { [ "$(cat "$P/vr/pages.json")" = '{"pages":["/mine"]}' ] && [ "$(cat "$P/vr/rubric.md")" = "# my rubric" ]; }
 check "--update-vr keeps the project's own pages.json and rubric.md" vr_project_files_kept
 echo "local edit" >> "$P/vr/auth.mjs"; echo "# local notes" > "$P/AGENTS.md"
@@ -173,6 +185,20 @@ check "--update-vr with --force replaces tool files" vr_updated
 check "--force still replaces other harness files after vr" bash -c "! grep -q 'local notes' '$P/AGENTS.md'"
 VR_VERSION="$VRTAG2" boot_vr "$P" --web --force
 check "--force without --update-vr still replaces project files (at the installed release)" bash -c "cmp -s '$VRFIX/pages.json' '$P/vr/pages.json' && cmp -s '$VRFIX/rubric.md' '$P/vr/rubric.md'"
+VR_VERSION="$VRTAG" boot_vr "$P" --web --update-vr
+check "downgrading removes later release files and restores earlier files" bash -c "[ ! -e '$P/vr/added-later.mjs' ] && [ -f '$P/vr/retired tools/old helper.mjs' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG' ]"
+
+Q="$(vrproj missing-previous)"; boot_vr "$Q" --web
+echo no-such-tag > "$Q/vr/.vr-version"
+cp -R "$Q" "$WORK/before-missing-previous"
+VR_VERSION="$VRTAG2" boot_vr "$Q" --web --update-vr; RC=$?
+check "an unavailable previous release fails before writing project files" bash -c "[ '$RC' -eq 1 ] && grep -q 'could not fetch previous vr' '$WORK/vrboot.log' && diff -r '$WORK/before-missing-previous' '$Q'"
+
+# Project configuration remains owned by the project even when removed upstream.
+gitc "$VRFIX" rm -q pages.json rubric.md
+gitc "$VRFIX" commit -q -m 'remove defaults' && gitc "$VRFIX" tag v9.9.10-fixture
+VR_VERSION=v9.9.10-fixture boot_vr "$P" --web --update-vr --force
+check "project configuration survives removal from the release" bash -c "[ -f '$P/vr/pages.json' ] && [ -f '$P/vr/rubric.md' ]"
 
 vr_unversioned_kept() {
   local flag="$1" dir
