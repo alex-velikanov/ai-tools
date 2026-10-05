@@ -20,6 +20,7 @@
 /vr/suspects.json
 /vr/judge_errors.json
 /vr/private.json
+/vr/orphans.json
 /vr/.auth/
 /vr/warnings.json
 /vr/report.json

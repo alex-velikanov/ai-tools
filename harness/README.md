@@ -80,7 +80,8 @@ binary, or run `npx playwright install chromium`). Runs the real `shoot.mjs`, `d
 - Logins: a scripted login saves a session only its owner can read and prints no credential, a page behind a login is shot logged in,
   an expired session or a missing `loggedIn` marker is an error (not a screenshot of the login page), a wrong password or a missing
   variable fails clearly, `VR_<PROFILE>_STATE` works as JSON or a path, `--manual` waits for the `loggedIn` marker; and pages behind a
-  login go to the judge like any other, and are kept away from it (a changed one then fails the run) only when the profile says `"judge": false`.
+  login go to the judge like any other, and are kept away from it (a changed one then fails the run) only when the profile says `"judge": false`; with such a profile, a baseline
+  screenshot whose page was renamed or removed gets a warning (it can no longer be known to be private).
 - Steps and names: click, hover, fill then press Enter, select and waitFor reach a state (a dialog, a menu, a search result) that looks
   the same as a page where that state is already shown; a step that cannot run stops the run, names the step and never prints what was
   typed; what one page's steps change does not leak into the next page; the same path can be shot twice under different names (logged

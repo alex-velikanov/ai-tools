@@ -368,6 +368,10 @@ Per-page options for content that would otherwise cause false alarms or missed p
   profile must not be seen by the AI judge, add `"judge": false`: its pages are then compared as pixels only, and a changed one fails
   the run (the report says it was not judged), because nothing else can vouch for it. The `baseline/`, `current/` and `report/` folders
   hold logged-in pages: do not publish them.
+- **Renaming or removing a page with `"judge": false`:** the old baseline file then belongs to no page in `pages.json`, so the tool can no
+  longer tell it was private, and it is shown to the judge as a page that disappeared. When any profile opts out, the run prints a warning
+  for each such file (and lists it in the report); re-record the baseline after renaming or removing a page. The warning never changes the
+  exit code.
 - A session is a live login. Do not commit it, paste it in a ticket, or leave it in a shared CI artifact.
 
 **States.** A page that looks different after an action (a menu open, a dialog, a form with an error, a cart with an item) is its own
