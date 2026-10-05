@@ -70,17 +70,25 @@ harness/test.sh --update-golden  # after an intended template change: regenerate
 - Markdown links resolve; gitleaks finds nothing in the repo.
 
 **The visual tool (`vr/`) has its own repository and its own tests**: [`alex-velikanov/visual-regressions`](https://github.com/alex-velikanov/visual-regressions)
-(fast, browser and judge tiers; CI runs fast and browser, with Chromium, on every push). The harness only fetches it: `VR_VERSION` pins the
-release, `--web` puts that release in `vr/` (the tool's files, not its tests or CI), and `.vr-version` records which one. The fast tier
-tests this against a local fixture repository, so it needs no network:
-- `--web` installs the pinned release: `vr.sh` is executable, `.vr-version` is the tag, and the release's tests, CI files and git data are not installed.
-- Re-running changes nothing. A newer pin alone does not touch `vr/` (the files are kept and the way to update is shown);
-  `--update-vr` moves it to the new release, replaces local edits to the tool, adds new files, removes files retired from the previous
-  release, and keeps your `pages.json`, `rubric.md`, and extra project files (an extra file whose path the new release starts to use is
-  replaced by the release's file). Cleanup uses the tag recorded in `.vr-version`; that tag
-  must still be available. Unversioned installations keep files whose release ownership is unknown.
-- A missing tag or an unreachable repository stops the run with a clear message before anything is written; without `--web` nothing is
-  fetched; `--dry-run` installs no vr. `VR_REPO_URL` and `VR_VERSION` override the repository and the tag.
+(fast, browser and judge tiers; CI runs fast and browser, with Chromium, on every push). The harness only fetches it. `harness/VR_VERSION` pins the release as a
+tag and the full commit it must point at (`v0.1.0 8804f35a…`): the tag is the readable version, the commit is what is trusted, so a tag that was
+moved upstream is refused instead of installed. `--web` puts that release in `vr/` (the tool's files, not its tests or CI), and `.vr-version`
+records the tag and commit. To move the pin, get the commit of the new tag with `git ls-remote https://github.com/alex-velikanov/visual-regressions
+'refs/tags/<tag>' 'refs/tags/<tag>^{}'`: for annotated tags, use the peeled `refs/tags/<tag>^{}` entry as the commit ID; for lightweight tags,
+use the direct `refs/tags/<tag>` entry (look at the commit in the release, not only the tag name). Edit `VR_VERSION`, then run `harness-init . --web --update-vr`. The fast
+tier tests all this against a local fixture repository, so it needs no network:
+- `--web` installs the pinned release: `vr.sh` is executable, `.vr-version` is the tag and commit, and the release's tests, CI files and git data
+  are not installed. A tag that points at another commit than the pin is refused before any project files are written.
+- Re-running changes nothing. A newer pin alone does not touch `vr/` (the files are kept and the way to update is shown); the same tag at
+  another commit counts as another release. `--update-vr` moves it to the new release, replaces local edits to the tool, adds new files, removes
+  files retired from the previous release, and keeps your `pages.json`, `rubric.md`, and extra project files (an extra file whose path the new
+  release starts to use is replaced by the release's file). Cleanup uses the previous release recorded in `.vr-version`, which must still be
+  available and still point at the commit recorded there; for an explicit same-tag update, the recorded commit itself must be available and verified.
+  Otherwise the update stops before writing anything. A marker with no commit
+  (written before pins carried one) is taken by tag, and gains the commit. Unversioned installations keep files whose release ownership is unknown.
+- A missing tag or an unreachable repository stops the run with a clear message before any project files are written; without `--web` nothing is
+  fetched; `--dry-run` installs no vr. `VR_REPO_URL`, `VR_VERSION` and `VR_COMMIT` override the repository, the tag and the commit (a tag
+  needs its commit: the run says how to look it up).
 
 **Full tier** (needs Docker, Semgrep, gitleaks, lefthook, Node, Go; builds real images):
 - The demo app end to end: `harness-init --install`, gitleaks blocks a leaked key, hooks pass, the pinned PHP runs as a non-root user,

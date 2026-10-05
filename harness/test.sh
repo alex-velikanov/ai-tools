@@ -46,7 +46,7 @@ for f in "$HARNESS/bootstrap.sh" "$HARNESS/test.sh" "$REPO/skills/install.sh" "$
 done
 
 # A local git repository that looks like visual-regressions: the tool at the root, plus the things that must not be installed.
-VRTAG="$(tr -d '[:space:]' < "$HARNESS/VR_VERSION")"; VRTAG2="v9.9.9-fixture"
+read -r VRTAG _ < "$HARNESS/VR_VERSION"; VRTAG2="v9.9.9-fixture"
 VRFIX="$WORK/vr-fixture"; mkdir -p "$VRFIX/tests" "$VRFIX/.github/workflows"
 printf '#!/usr/bin/env bash\necho vr\n' > "$VRFIX/vr.sh"; chmod +x "$VRFIX/vr.sh"
 echo one > "$VRFIX/marker"; echo '{"pages":["/"]}' > "$VRFIX/pages.json"; echo "# rubric" > "$VRFIX/rubric.md"
@@ -59,8 +59,9 @@ git -C "$VRFIX" init -q -b main && gitc "$VRFIX" add -A && gitc "$VRFIX" commit 
 echo two > "$VRFIX/marker"; echo "export const a = 2;" > "$VRFIX/auth.mjs"; echo "export const b = 1;" > "$VRFIX/added-later.mjs"
 rm "$VRFIX/retired tools/old helper.mjs"
 gitc "$VRFIX" add -A && gitc "$VRFIX" commit -q -m two && gitc "$VRFIX" tag "$VRTAG2"
+VRCOMMIT="$(git -C "$VRFIX" rev-parse "$VRTAG^{commit}")"; VRCOMMIT2="$(git -C "$VRFIX" rev-parse "$VRTAG2^{commit}")"
 export VR_REPO_URL="$VRFIX"      # every bootstrap in these tests fetches vr from the fixture
-unset VR_VERSION
+export VR_VERSION="$VRTAG" VR_COMMIT="$VRCOMMIT"      # the default pin of these tests is the fixture's first release
 
 echo; echo "== fast: golden snapshots of generated files =="
 # Project dir is always named "proj" so paths and the compose project name are stable.
@@ -154,7 +155,7 @@ echo; echo "== fast: vr comes from its own repository (a local fixture, no netwo
 vrproj() { rm -rf "$WORK/vrp/$1"; mkdir -p "$WORK/vrp/$1"; echo "$WORK/vrp/$1"; }
 boot_vr() { local dir="$1"; shift; "$HARNESS/bootstrap.sh" "$dir" "$@" >"$WORK/vrboot.log" 2>&1; }
 P="$(vrproj web)"; boot_vr "$P" --web
-vr_fetched() { [ -x "$P/vr/vr.sh" ] && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG" ] && [ "$(cat "$P/vr/marker")" = one ] \
+vr_fetched() { [ -x "$P/vr/vr.sh" ] && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG $VRCOMMIT" ] && [ "$(cat "$P/vr/marker")" = one ] \
   && { for f in pages.json rubric.md package.json README.md auth.mjs; do [ -f "$P/vr/$f" ] || return 1; done; }; }
 check "--web puts the pinned vr release in vr/ (executable vr.sh, .vr-version is the tag)" vr_fetched
 vr_only_the_tool() { for f in tests test.sh .github CLAUDE.md .gitignore .git; do [ ! -e "$P/vr/$f" ] || { echo "vr/$f should not be installed"; return 1; }; done; }
@@ -164,40 +165,41 @@ echo '{"pages":["/mine"]}' > "$P/vr/pages.json"; echo "# my rubric" > "$P/vr/rub
 echo "local edit" >> "$P/vr/retired tools/old helper.mjs"
 echo custom > "$P/vr/retired tools/custom.mjs"
 mkdir -p "$P/vr/tests"; echo custom > "$P/vr/tests/x.test.mjs"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web
-vr_pin_moved_without_flag() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG" ] && [ "$(cat "$P/vr/marker")" = one ] && grep -q "local edit" "$P/vr/auth.mjs" && [ ! -e "$P/vr/added-later.mjs" ]; }
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web
+vr_pin_moved_without_flag() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG $VRCOMMIT" ] && [ "$(cat "$P/vr/marker")" = one ] && grep -q "local edit" "$P/vr/auth.mjs" && [ ! -e "$P/vr/added-later.mjs" ]; }
 check "a newer pin alone leaves vr/ whole (nothing replaced, no new files from the newer release) and shows the way to update" vr_pin_moved_without_flag
 check "a newer pin alone keeps retired release files" test -f "$P/vr/retired tools/old helper.mjs"
 cp -R "$P/vr" "$WORK/vr-before-update"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --dry-run
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web --update-vr --dry-run
 check "update dry-run reports retired files and leaves vr unchanged" bash -c "diff -r '$WORK/vr-before-update' '$P/vr' && grep -q 'removed.*vr/retired tools/old helper.mjs' '$WORK/vrboot.log'"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr
-vr_updated() { [ "$(cat "$P/vr/.vr-version")" = "$VRTAG2" ] && [ "$(cat "$P/vr/marker")" = two ] && [ -f "$P/vr/added-later.mjs" ] && ! grep -q "local edit" "$P/vr/auth.mjs"; }
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web --update-vr
+vr_updated() { [ "$(cat "$P/vr/.vr-version")" = "$VRTAG2 $VRCOMMIT2" ] && [ "$(cat "$P/vr/marker")" = two ] && [ -f "$P/vr/added-later.mjs" ] && ! grep -q "local edit" "$P/vr/auth.mjs"; }
 check "--update-vr moves vr/ to the new release (changed and new files, a local edit to the tool is replaced)" vr_updated
 check "--update-vr removes retired release files even with local edits" test ! -e "$P/vr/retired tools/old helper.mjs"
 check "--update-vr preserves extra project files and excluded release paths" bash -c "[ \"\$(cat '$P/vr/retired tools/custom.mjs')\" = custom ] && [ \"\$(cat '$P/vr/tests/x.test.mjs')\" = custom ]"
 vr_project_files_kept() { [ "$(cat "$P/vr/pages.json")" = '{"pages":["/mine"]}' ] && [ "$(cat "$P/vr/rubric.md")" = "# my rubric" ]; }
 check "--update-vr keeps the project's own pages.json and rubric.md" vr_project_files_kept
 echo "local edit" >> "$P/vr/auth.mjs"; echo "# local notes" > "$P/AGENTS.md"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --force
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web --update-vr --force
 check "--update-vr with --force keeps pages.json and rubric.md" vr_project_files_kept
 check "--update-vr with --force replaces tool files" vr_updated
 check "--force still replaces other harness files after vr" bash -c "! grep -q 'local notes' '$P/AGENTS.md'"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web --force
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web --force
 check "--force without --update-vr still replaces project files (at the installed release)" bash -c "cmp -s '$VRFIX/pages.json' '$P/vr/pages.json' && cmp -s '$VRFIX/rubric.md' '$P/vr/rubric.md'"
-VR_VERSION="$VRTAG" boot_vr "$P" --web --update-vr
-check "downgrading removes later release files and restores earlier files" bash -c "[ ! -e '$P/vr/added-later.mjs' ] && [ -f '$P/vr/retired tools/old helper.mjs' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG' ]"
+VR_VERSION="$VRTAG" VR_COMMIT="$VRCOMMIT" boot_vr "$P" --web --update-vr
+check "downgrading removes later release files and restores earlier files" bash -c "[ ! -e '$P/vr/added-later.mjs' ] && [ -f '$P/vr/retired tools/old helper.mjs' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG $VRCOMMIT' ]"
 
 Q="$(vrproj missing-previous)"; boot_vr "$Q" --web
 echo no-such-tag > "$Q/vr/.vr-version"
 cp -R "$Q" "$WORK/before-missing-previous"
-VR_VERSION="$VRTAG2" boot_vr "$Q" --web --update-vr; RC=$?
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$Q" --web --update-vr; RC=$?
 check "an unavailable previous release fails before writing project files" bash -c "[ '$RC' -eq 1 ] && grep -q 'could not fetch previous vr' '$WORK/vrboot.log' && diff -r '$WORK/before-missing-previous' '$Q'"
 
 # Project configuration remains owned by the project even when removed upstream.
 gitc "$VRFIX" rm -q pages.json rubric.md
 gitc "$VRFIX" commit -q -m 'remove defaults' && gitc "$VRFIX" tag v9.9.10-fixture
-VR_VERSION=v9.9.10-fixture boot_vr "$P" --web --update-vr --force
+VRCOMMIT3="$(git -C "$VRFIX" rev-parse HEAD)"
+VR_VERSION=v9.9.10-fixture VR_COMMIT="$VRCOMMIT3" boot_vr "$P" --web --update-vr --force
 check "project configuration survives removal from the release" bash -c "[ -f '$P/vr/pages.json' ] && [ -f '$P/vr/rubric.md' ]"
 
 vr_unversioned_kept() {
@@ -208,7 +210,7 @@ vr_unversioned_kept() {
   echo "local edit" >> "$dir/vr/vr.sh"
   cp -R "$dir/vr" "$dir/before"
   local args=(); [ "$flag" = plain ] || args+=("--$flag")
-  VR_VERSION="$VRTAG2" boot_vr "$dir" --web "${args[@]}" || return 1
+  VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$dir" --web "${args[@]}" || return 1
   diff -r "$dir/before" "$dir/vr" && grep -q 'run again with --update-vr' "$WORK/vrboot.log"
 }
 for flag in plain force dry-run; do
@@ -218,14 +220,63 @@ P="$(vrproj migrate)"; boot_vr "$P" --web
 rm "$P/vr/.vr-version"
 echo '{"pages":["/mine"]}' > "$P/vr/pages.json"; echo "# my rubric" > "$P/vr/rubric.md"
 echo "local edit" >> "$P/vr/auth.mjs"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --force
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web --update-vr --force
 check "--update-vr migrates an unversioned installation" vr_updated
 check "unversioned migration with --force preserves project files" vr_project_files_kept
 rm "$P/vr/.vr-version" "$P/vr/README.md"
-VR_VERSION="$VRTAG2" boot_vr "$P" --web
-check "matching unversioned tools can gain missing release files and a version marker" bash -c "[ -f '$P/vr/README.md' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG2' ]"
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$P" --web
+check "matching unversioned tools can gain missing release files and a version marker" bash -c "[ -f '$P/vr/README.md' ] && [ \"\$(cat '$P/vr/.vr-version')\" = '$VRTAG2 $VRCOMMIT2' ]"
 check "custom project files alone do not block adopting a version" vr_project_files_kept
-Q="$(vrproj bad)"; VR_VERSION=no-such-tag boot_vr "$Q" --web; RC=$?
+echo; echo "-- the pin is a tag and a commit: a moved tag is refused"
+Q="$(vrproj moved-tag-pin)"; VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT" boot_vr "$Q" --web; RC=$?
+vr_moved_tag_refused() { [ "$RC" -eq 1 ] && grep -q "is at commit $VRCOMMIT2" "$WORK/vrboot.log" && grep -q "pins $VRCOMMIT" "$WORK/vrboot.log" && grep -q "Refusing to install" "$WORK/vrboot.log" && [ -z "$(ls -A "$Q")" ]; }
+check "a tag that points at another commit than the pin is refused, and nothing is written" vr_moved_tag_refused
+Q="$(vrproj no-commit)"; ( unset VR_COMMIT; VR_VERSION="$VRTAG2" boot_vr "$Q" --web ); RC=$?
+check "VR_VERSION without VR_COMMIT is refused with the way to look the commit up" bash -c "[ '$RC' -eq 2 ] && grep -q 'VR_COMMIT' '$WORK/vrboot.log' && grep -q 'git ls-remote' '$WORK/vrboot.log' && [ -z \"\$(ls -A '$Q')\" ]"
+Q="$(vrproj short-commit)"; VR_VERSION="$VRTAG2" VR_COMMIT="${VRCOMMIT2:0:7}" boot_vr "$Q" --web; RC=$?
+check "a commit that is not the full 40 hex characters is refused" bash -c "[ '$RC' -eq 2 ] && grep -q '40-character' '$WORK/vrboot.log' && [ -z \"\$(ls -A '$Q')\" ]"
+
+Q="$(vrproj commit-only)"; ( unset VR_VERSION; boot_vr "$Q" --web ); RC=$?
+check "VR_COMMIT alone overrides the default commit while using the default tag" bash -c "[ '$RC' -eq 0 ] && [ \"\$(cat '$Q/vr/.vr-version')\" = '$VRTAG $VRCOMMIT' ]"
+
+# one tag, moved after it was installed: the same tag at another commit is another release
+gitc "$VRFIX" tag v9.9.7-moved "$VRCOMMIT"
+M="$(vrproj moved-after-install)"; VR_VERSION=v9.9.7-moved VR_COMMIT="$VRCOMMIT" boot_vr "$M" --web
+gitc "$VRFIX" tag -f v9.9.7-moved "$VRCOMMIT2" >/dev/null
+VR_VERSION=v9.9.7-moved VR_COMMIT="$VRCOMMIT2" boot_vr "$M" --web
+vr_same_tag_other_commit_left_whole() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$M/vr/.vr-version")" = "v9.9.7-moved $VRCOMMIT" ] && [ "$(cat "$M/vr/marker")" = one ] && [ ! -e "$M/vr/added-later.mjs" ]; }
+check "the same tag at another commit is another release: vr/ is left whole without --update-vr" vr_same_tag_other_commit_left_whole
+VR_VERSION=v9.9.7-moved VR_COMMIT="$VRCOMMIT2" boot_vr "$M" --web --update-vr
+check "--update-vr moves vr/ to the same tag at its new commit" bash -c "[ \"\$(cat '$M/vr/.vr-version')\" = 'v9.9.7-moved $VRCOMMIT2' ] && [ \"\$(cat '$M/vr/marker')\" = two ]"
+
+check "same-tag --update-vr removes retired release files" test ! -e "$M/vr/retired tools/old helper.mjs"
+
+# A recorded commit that cannot be fetched must not allow a partial same-tag update.
+Q="$(vrproj same-tag-missing-commit)"; boot_vr "$Q" --web
+printf '%s %s\n' "$VRTAG" 0000000000000000000000000000000000000000 > "$Q/vr/.vr-version"
+cp -R "$Q" "$WORK/before-same-tag-missing-commit"
+boot_vr "$Q" --web --update-vr --force; RC=$?
+check "same-tag update with an unavailable recorded commit fails before writing project files" bash -c "[ '$RC' -eq 1 ] && grep -q 'could not resolve previous vr' '$WORK/vrboot.log' && diff -r '$WORK/before-same-tag-missing-commit' '$Q'"
+
+# the previous release is trusted only while its tag still points at the commit recorded at install time
+gitc "$VRFIX" tag v9.9.6-prev "$VRCOMMIT"
+N="$(vrproj previous-moved)"; VR_VERSION=v9.9.6-prev VR_COMMIT="$VRCOMMIT" boot_vr "$N" --web
+gitc "$VRFIX" tag -f v9.9.6-prev "$VRCOMMIT2" >/dev/null
+cp -R "$N" "$WORK/before-previous-moved"
+VR_VERSION=v9.9.10-fixture VR_COMMIT="$VRCOMMIT3" boot_vr "$N" --web --update-vr; RC=$?
+vr_previous_moved_refused() { [ "$RC" -eq 1 ] && grep -q "was installed at commit $VRCOMMIT" "$WORK/vrboot.log" && diff -r "$WORK/before-previous-moved" "$N"; }
+check "--update-vr refuses to trust a previous release whose tag moved, before writing anything" vr_previous_moved_refused
+
+# a marker written before pins carried a commit still works, and gains the commit
+L="$(vrproj legacy-marker)"; boot_vr "$L" --web
+echo "$VRTAG" > "$L/vr/.vr-version"
+boot_vr "$L" --web
+check "a tag-only marker for the pinned tag gains the commit, quietly" bash -c "[ \"\$(cat '$L/vr/.vr-version')\" = '$VRTAG $VRCOMMIT' ] && ! grep -q 'SKIP' '$WORK/vrboot.log'"
+echo "$VRTAG" > "$L/vr/.vr-version"
+VR_VERSION="$VRTAG2" VR_COMMIT="$VRCOMMIT2" boot_vr "$L" --web --update-vr
+check "--update-vr works from a tag-only marker (the previous release is taken by tag)" bash -c "[ \"\$(cat '$L/vr/.vr-version')\" = '$VRTAG2 $VRCOMMIT2' ] && [ ! -e '$L/vr/retired tools/old helper.mjs' ]"
+
+Q="$(vrproj bad)"; VR_VERSION=no-such-tag VR_COMMIT="$VRCOMMIT" boot_vr "$Q" --web; RC=$?
 vr_bad_tag() { [ "$RC" -eq 1 ] && ! grep -qE "^(tar|fatal: cannot change)" "$WORK/vrboot.log" && grep -q "could not fetch vr no-such-tag" "$WORK/vrboot.log" && grep -q "VR_REPO_URL" "$WORK/vrboot.log" && [ -z "$(ls -A "$Q")" ]; }
 check "a missing tag stops the run with a clear message and writes nothing" vr_bad_tag
 Q="$(vrproj gone)"; VR_REPO_URL="$WORK/no-such-repo" boot_vr "$Q" --web; RC=$?
