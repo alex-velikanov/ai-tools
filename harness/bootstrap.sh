@@ -23,6 +23,7 @@ Runtime options (PHP, Node and the database run in Docker Compose; there is no h
 
 Other options:
   --install     also run installs (build + start containers, phpstan, Playwright, vr deps)
+  --update-vr   move an existing vr/ to the version pinned in VR_VERSION (replaces the tool's files; keeps your pages.json and rubric.md)
   --force       replace existing files that differ (default: skip and show diff)
   --dry-run     show what would happen, write nothing
   -h, --help    this help
@@ -34,7 +35,7 @@ EOF
 
 die() { echo "error: $*" >&2; exit 2; }
 
-TARGET=""; FORCE=0; INSTALL=0; DRY=0
+TARGET=""; FORCE=0; INSTALL=0; DRY=0; UPDATE_VR=0
 PHP=0; GO=0; WEB=0; PHP_DIR="."; GO_DIR="."; WEB_DIR="."
 PHP_VERSION="8.3"; NODE_VERSION="22"; DB_SPEC="none"
 while [ $# -gt 0 ]; do
@@ -48,7 +49,7 @@ while [ $# -gt 0 ]; do
     --node-version=*) NODE_VERSION="${1#*=}" ;;
     --db)           [ $# -ge 2 ] || die "--db needs a value";           DB_SPEC="$2"; shift ;;
     --db=*) DB_SPEC="${1#*=}" ;;
-    --force) FORCE=1 ;; --install) INSTALL=1 ;; --dry-run) DRY=1 ;;
+    --force) FORCE=1 ;; --install) INSTALL=1 ;; --dry-run) DRY=1 ;; --update-vr) UPDATE_VR=1 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *) [ -z "$TARGET" ] || die "only one target dir allowed"; TARGET="$1" ;;
@@ -134,6 +135,83 @@ apply_tree() {
   done < <(find "$tree" -type f | sort)
 }
 
+# ---- the visual tool (vr/) is its own project (visual-regressions): fetch the release pinned in VR_VERSION into a temp dir before
+# anything is written, so an unreachable repo or a missing tag stops the run with the project untouched.
+# VR_REPO_URL (a URL or a local path) and VR_VERSION (a tag) override the defaults, for tests and for trying a newer release.
+VR_REPO_URL="${VR_REPO_URL:-https://github.com/alex-velikanov/visual-regressions}"
+VR_TAG="${VR_VERSION:-$(tr -d '[:space:]' < "$HARNESS_DIR/VR_VERSION")}"
+VR_TREE=""; VR_PREVIOUS_TREE=""
+archive_vr() {
+  git -C "$1" archive HEAD -- . ':(exclude)tests' ':(exclude)test.sh' ':(exclude).github' ':(exclude).gitignore' ':(exclude)CLAUDE.md' | tar -x -C "$2"
+}
+if [ "$WEB" = 1 ]; then
+  VR_TREE="$TMP/vr-tool"
+  if ! git clone -q --depth 1 --branch "$VR_TAG" "$VR_REPO_URL" "$TMP/vr-src" 2>"$TMP/vr-clone.log"; then
+    echo "error: could not fetch vr $VR_TAG from $VR_REPO_URL (--web needs it). Nothing was written." >&2
+    sed 's/^/  /' "$TMP/vr-clone.log" | tail -3 >&2
+    echo "  Check the network and the tag, or set VR_REPO_URL to a local copy of the repository." >&2
+    exit 1
+  fi
+  mkdir -p "$VR_TREE"
+  archive_vr "$TMP/vr-src" "$VR_TREE"
+  printf '%s\n' "$VR_TAG" > "$VR_TREE/.vr-version"
+  # Resolve previous ownership before writing anything; never infer it from project files.
+  if [ "$UPDATE_VR" = 1 ] && [ -f "$TARGET/vr/.vr-version" ]; then
+    VR_PREVIOUS_TAG="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
+    if [ -n "$VR_PREVIOUS_TAG" ] && [ "$VR_PREVIOUS_TAG" != "$VR_TAG" ]; then
+      if ! git clone -q --depth 1 --branch "$VR_PREVIOUS_TAG" "$VR_REPO_URL" "$TMP/vr-previous-src" 2>"$TMP/vr-previous-clone.log"; then
+        echo "error: could not fetch previous vr $VR_PREVIOUS_TAG from $VR_REPO_URL to identify retired tool files. Nothing was written." >&2
+        exit 1
+      fi
+      VR_PREVIOUS_TREE="$TMP/vr-previous-tool"
+      mkdir -p "$VR_PREVIOUS_TREE"
+      archive_vr "$TMP/vr-previous-src" "$VR_PREVIOUS_TREE"
+    fi
+  fi
+fi
+
+# apply_vr — vr/ gets the release's files. Like everything else a differing file is kept unless --force; --update-vr replaces the
+# tool's own files, removes retired release files, and keeps pages.json and rubric.md, which are the project's.
+apply_vr() {
+  local f rel keep="$FORCE" had=""
+  [ -f "$TARGET/vr/.vr-version" ] && had="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
+  # An installation at another release is left whole: adding the new release's missing files would mix two revisions.
+  if [ -d "$TARGET/vr" ] && [ "$UPDATE_VR" != 1 ] && [ -n "$had" ] && [ "$had" != "$VR_TAG" ]; then
+    log note "vr/ is at $had and this harness pins $VR_TAG: left unchanged, run again with --update-vr to move it"
+    return 0
+  fi
+  # Check the whole unversioned installation before adding any release files or its version marker.
+  if [ -d "$TARGET/vr" ] && [ ! -e "$TARGET/vr/.vr-version" ] && [ "$UPDATE_VR" != 1 ]; then
+    while IFS= read -r f; do
+      rel="${f#$VR_TREE/}"
+      case "$rel" in .vr-version|pages.json|rubric.md) continue ;; esac
+      if [ -e "$TARGET/vr/$rel" ] && ! cmp -s "$f" "$TARGET/vr/$rel"; then
+        log note "vr/ has differing tool files and no .vr-version; left unchanged: run again with --update-vr to move it to $VR_TAG"
+        return 0
+      fi
+    done < <(find "$VR_TREE" -type f | sort)
+  fi
+  if [ "$UPDATE_VR" = 1 ] && [ -n "$VR_PREVIOUS_TREE" ]; then
+    while IFS= read -r -d '' f; do
+      rel="${f#$VR_PREVIOUS_TREE/}"
+      case "$rel" in pages.json|rubric.md) continue ;; esac
+      if [ ! -e "$VR_TREE/$rel" ] && [ ! -L "$VR_TREE/$rel" ] && { [ -f "$TARGET/vr/$rel" ] || [ -L "$TARGET/vr/$rel" ]; }; then
+        log removed "vr/$rel"
+        [ "$DRY" = 1 ] || rm -f -- "$TARGET/vr/$rel"
+      fi
+    done < <(find "$VR_PREVIOUS_TREE" -type f -print0)
+  fi
+  while IFS= read -r f; do
+    rel="${f#$VR_TREE/}"
+    FORCE="$keep"
+    if [ "$UPDATE_VR" = 1 ]; then
+      case "$rel" in pages.json|rubric.md) FORCE=0 ;; *) FORCE=1 ;; esac
+    fi
+    if [ -x "$f" ]; then put "$f" "vr/$rel" x; else put "$f" "vr/$rel"; fi
+  done < <(find "$VR_TREE" -type f | sort)
+  FORCE="$keep"
+}
+
 # append_gitignore <fragment...> — adds only lines not already present
 append_gitignore() {
   local dest="$TARGET/.gitignore" added=0 line
@@ -164,6 +242,7 @@ fi
 if [ "$WEB" = 1 ]; then
   apply_tree "$HARNESS_DIR/modules/web/files" "$(prefix "$WEB_DIR")"
   apply_tree "$HARNESS_DIR/modules/web/root" ""
+  apply_vr
 fi
 
 # ---- 2. assembled files

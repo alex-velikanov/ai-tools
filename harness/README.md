@@ -56,8 +56,6 @@ test.sh                 the test suite (below)
 ```bash
 harness/test.sh                  # fast tier, a minute or two, starts no containers
 harness/test.sh full             # + real containers, several minutes
-harness/test.sh browser          # the vr scripts in headless Chromium against a local test site, ~90 s, no model
-harness/test.sh judge            # the vr judge on labelled pages with the real model (uses plan tokens)
 harness/test.sh --update-golden  # after an intended template change: regenerate, then review the git diff
 ```
 
@@ -71,31 +69,17 @@ harness/test.sh --update-golden  # after an intended template change: regenerate
 - The skills installer (link, copy, skip diverged, leave foreign skills alone) and the skills' frontmatter.
 - Markdown links resolve; gitleaks finds nothing in the repo.
 
-**Browser tier** (needs Node and a Chromium; skips itself with a message if it finds none. Set `VR_CHROMIUM` to a Chrome/Chromium
-binary, or run `npx playwright install chromium`). Runs the real `shoot.mjs`, `discover.mjs` and `vr.sh` against a tiny local site
-(`tests/vr/site/server.mjs`), with a stub in place of the judge, so no model is used:
-- Screenshots: sizes for desktop, tablet and mobile, tile counts for a tall page, the `maxTiles` limit, `waitFor` (a late-loading
-  heading), `mask` (a changing element), frozen CSS animations, a base URL ending in `/`.
-- Errors: HTTP 404 and 500 stop the run, `expectStatus` allows an expected one, an unreachable server and a bad `pages.json` fail.
-- Logins: a scripted login saves a session only its owner can read and prints no credential, a page behind a login is shot logged in,
-  an expired session or a missing `loggedIn` marker is an error (not a screenshot of the login page), a wrong password or a missing
-  variable fails clearly, `VR_<PROFILE>_STATE` works as JSON or a path, `--manual` waits for the `loggedIn` marker; and pages behind a
-  login go to the judge like any other, and are kept away from it (a changed one then fails the run) only when the profile says `"judge": false`; with such a profile, a baseline
-  screenshot whose page was renamed or removed gets a warning (it can no longer be known to be private).
-- Code and data apart (`VR_DATA`): login, record, compare and discover run with the tool's folder and the project's folder different; the
-  project's `pages.json` is the one used, every file the run makes is in the project's folder, the tool's folder is left exactly as it was,
-  the tool's rubric is used unless the project has its own, and a missing folder or `pages.json` is a clear error.
-- Steps and names: click, hover, fill then press Enter, select and waitFor reach a state (a dialog, a menu, a search result) that looks
-  the same as a page where that state is already shown; a step that cannot run stops the run, names the step and never prints what was
-  typed; what one page's steps change does not leak into the next page; the same path can be shot twice under different names (logged
-  out and logged in); and a state that can no longer be reached fails `vr.sh` and leaves the baseline alone.
-- `--discover`: linked and sitemap pages are found; logout, files, off-site and mail links are skipped; broken links and off-site
-  redirects are reported; `DISCOVER_MAX` stops the crawl.
-- `vr.sh` end to end: record, an unchanged compare (the judge is not called), a page that loses its navigation fails the gate, and a
-  failing page or a failed `--record` leaves the baseline alone.
-
-**Judge tier** (needs the `claude` CLI and a Chromium; uses plan tokens): runs the real vr pipeline over 27 labelled before/after
-mock pages and fails if the judge misses broken pages or flags fine ones. `tests/vr/judge/repeat.sh` repeats it and keeps every reply.
+**The visual tool (`vr/`) has its own repository and its own tests**: [`alex-velikanov/visual-regressions`](https://github.com/alex-velikanov/visual-regressions)
+(fast, browser and judge tiers; CI runs fast and browser, with Chromium, on every push). The harness only fetches it: `VR_VERSION` pins the
+release, `--web` puts that release in `vr/` (the tool's files, not its tests or CI), and `.vr-version` records which one. The fast tier
+tests this against a local fixture repository, so it needs no network:
+- `--web` installs the pinned release: `vr.sh` is executable, `.vr-version` is the tag, and the release's tests, CI files and git data are not installed.
+- Re-running changes nothing. A newer pin alone does not touch `vr/` (the files are kept and the way to update is shown);
+  `--update-vr` moves it to the new release, replaces local edits to the tool, adds new files, removes files retired from the previous
+  release, and keeps your `pages.json`, `rubric.md`, and extra project files. Cleanup uses the tag recorded in `.vr-version`; that tag
+  must still be available. Unversioned installations keep files whose release ownership is unknown.
+- A missing tag or an unreachable repository stops the run with a clear message before anything is written; without `--web` nothing is
+  fetched; `--dry-run` installs no vr. `VR_REPO_URL` and `VR_VERSION` override the repository and the tag.
 
 **Full tier** (needs Docker, Semgrep, gitleaks, lefthook, Node, Go; builds real images):
 - The demo app end to end: `harness-init --install`, gitleaks blocks a leaked key, hooks pass, the pinned PHP runs as a non-root user,
