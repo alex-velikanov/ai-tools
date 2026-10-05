@@ -4,11 +4,11 @@
 // Nothing here ever prints a credential or a session.
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { envName } from './config.mjs';
+import { dataPath } from './paths.mjs';
 import { joinUrl } from './links.mjs';
 
-const AUTH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '.auth');
+const AUTH_DIR = dataPath('.auth');
 export const statePath = profile => path.join(AUTH_DIR, `${profile}.json`);
 
 export function loadSession(profile, env = process.env) {
@@ -26,8 +26,16 @@ export function loadSession(profile, env = process.env) {
 export function saveSession(profile, state) {
   fs.mkdirSync(AUTH_DIR, { recursive: true, mode: 0o700 });
   fs.chmodSync(AUTH_DIR, 0o700);
+  // A session is a live login. This folder ignores itself, so it cannot be committed by accident wherever the data folder is.
+  // Reject symlinks during open, before truncating, so their targets cannot be overwritten.
+  fs.writeFileSync(path.join(AUTH_DIR, '.gitignore'), '*\n', {
+    flag: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+  });
   const file = statePath(profile);
-  fs.writeFileSync(file, JSON.stringify(state), { mode: 0o600 });
+  const serialized = JSON.stringify(state);
+  // Remove first, then create exclusively: a symlink at this path is replaced, never followed to its target.
+  fs.rmSync(file, { force: true });
+  fs.writeFileSync(file, serialized, { mode: 0o600, flag: 'wx' });
   fs.chmodSync(file, 0o600);
   return file;
 }

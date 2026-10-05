@@ -18,7 +18,7 @@ const site = await startSite();
 // ---- helpers
 function workdir(pages) {
   const d = fs.mkdtempSync(path.join(ROOT, 'w-'));
-  for (const f of ['vr.sh', 'filter.mjs', 'config.mjs', 'links.mjs', 'browser.mjs', 'shoot.mjs', 'discover.mjs', 'auth.mjs', 'login.mjs', 'steps.mjs', 'report.py', 'html_report.py', 'rubric.md']) {
+  for (const f of ['vr.sh', 'filter.mjs', 'config.mjs', 'links.mjs', 'browser.mjs', 'shoot.mjs', 'discover.mjs', 'auth.mjs', 'login.mjs', 'steps.mjs', 'paths.mjs', 'report.py', 'html_report.py', 'rubric.md']) {
     if (fs.existsSync(path.join(VR, f))) fs.copyFileSync(path.join(VR, f), path.join(d, f));
   }
   fs.mkdirSync(path.join(d, 'bin'));
@@ -29,7 +29,9 @@ function workdir(pages) {
   return d;
 }
 const run = (cmd, args, cwd, env = {}) => new Promise(resolve => {
-  execFile(cmd, args, { cwd, env: { ...process.env, ...env }, timeout: 90000 }, (err, stdout, stderr) =>
+  const childEnv = { ...process.env, ...env };
+  if (!('VR_DATA' in env)) delete childEnv.VR_DATA;           // never inherit the caller's: it may be a real project's data folder
+  execFile(cmd, args, { cwd, env: childEnv, timeout: 90000 }, (err, stdout, stderr) =>
     resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr }));
 });
 const shoot = (d, base = site.main, env = {}) => run('node', ['shoot.mjs'], d, { BASE_URL: base, OUT: 'out', ...env });
@@ -465,6 +467,55 @@ test('vr.sh: a state that can no longer be reached fails the run and leaves the 
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /\/modal \[desktop\]: step 1 \(click "#open"\) failed/);
   assert.ok(bytes(d, 'desktop__dialog-open__0.png', 'baseline').equals(before), 'the baseline changed');
+});
+
+// ---- the tool's code and a project's data in separate folders (VR_DATA)
+test('VR_DATA: a VR_DATA in the caller\'s environment never reaches the tests\' commands, but one a test sets does', async () => {
+  const decoy = fs.mkdtempSync(path.join(ROOT, 'decoy-'));
+  const before = process.env.VR_DATA;
+  process.env.VR_DATA = decoy;
+  try {
+    const inherited = await run('bash', ['-c', 'echo "[${VR_DATA-unset}]"'], ROOT);
+    assert.equal(inherited.stdout.trim(), '[unset]');
+    const explicit = await run('bash', ['-c', 'echo "[${VR_DATA-unset}]"'], ROOT, { VR_DATA: '/explicit' });
+    assert.equal(explicit.stdout.trim(), '[/explicit]');
+  } finally {
+    if (before === undefined) delete process.env.VR_DATA; else process.env.VR_DATA = before;
+  }
+});
+function splitWorkdir(pages) {
+  const tool = workdir(['/from-the-tool-folder']);                       // the code, with a pages.json that must never be used
+  const data = fs.mkdtempSync(path.join(ROOT, 'data-'));
+  fs.writeFileSync(path.join(data, 'pages.json'), JSON.stringify(pages));
+  return { tool, data };
+}
+const vrSplit = ({ tool, data }, args, env = {}) => run('bash', [path.join(tool, 'vr.sh'), ...args], data, {
+  VR_DATA: data, PATH: `${path.join(tool, 'bin')}:${process.env.PATH}`,
+  CLAUDE_STUB_LOG: path.join(data, 'claude.log'), CLAUDE_STUB_OUT: path.join(data, 'claude.out'), ...env });
+const listing = d => fs.readdirSync(d).sort();
+
+test('VR_DATA: login, record and compare with the code and the project\'s data in different folders', async () => {
+  await site.setMode('normal');
+  const dirs = splitWorkdir({ ...ONE, auth: AUTH, pages: ['/', '/shop', { path: '/account', auth: 'customer' }] });
+  const before = listing(dirs.tool);
+  let r = await vrSplit(dirs, ['--login', 'customer', site.main], CREDS);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const session = path.join(dirs.data, '.auth', 'customer.json');
+  assert.equal(fs.statSync(session).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(path.join(dirs.data, '.auth', '.gitignore'), 'utf8'), '*\n');          // the login ignores itself in git
+  r = await vrSplit(dirs, ['--record', site.main]);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.deepEqual(files(dirs.data, 'baseline'), ['desktop__account__0.png', 'desktop__home__0.png', 'desktop__shop__0.png']);
+  r = await vrSplit(dirs, [site.main]);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /nothing changed/);
+  assert.ok(fs.existsSync(path.join(dirs.data, 'report', 'index.html')));
+  assert.deepEqual(listing(dirs.tool), before, 'the run left files in the code folder');          // nothing but the code is there
+  r = await vrSplit(dirs, ['--discover', site.main]);                                              // discover reads the data folder's pages.json too
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!r.stdout.includes('/from-the-tool-folder'));
+  assert.ok(r.stdout.split('\n').includes('/tall'), r.stdout);                                   // found by crawling the data folder's pages
+  assert.ok(!r.stdout.split('\n').includes('/shop'));                                              // and one it already lists is not proposed again
 });
 
 // ---- run them

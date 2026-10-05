@@ -357,7 +357,7 @@ Per-page options for content that would otherwise cause false alarms or missed p
 ```
 
 - **Log in once:** `VR_CUSTOMER_USER=... VR_CUSTOMER_PASSWORD=... vr/vr.sh --login customer <base-url>` fills the form and saves the
-  session to `vr/.auth/customer.json` (gitignored, readable only by you). Credentials are only ever read from the environment: a field
+  session to `vr/.auth/customer.json` (readable only by you, and ignored by git: the folder holds its own `.gitignore`, wherever `VR_DATA` is). Credentials are only ever read from the environment: a field
   value must be a `$NAME` reference (`$USER` means `VR_CUSTOMER_USER`), and `pages.json` is rejected if it holds anything else.
   For SSO, MFA or a captcha use `--manual`: a browser window opens, you log in, and the session is saved when `loggedIn` appears
   (it needs a display, so do it on your own machine). In CI, put the session (the JSON, or a path to it) in `VR_CUSTOMER_STATE`.
@@ -433,6 +433,13 @@ deploy into the new normal. Without a baseline, `vr.sh` stops and tells you to r
 Unchanged pages are dropped by a pixel check first (a screenshot only on one side counts as changed), so the model only judges pages that
 changed. It exits non-zero at severity 3 or above. Calibrate `vr/rubric.md` against about 20
 labelled before/after pairs before you trust it, and re-run them when you switch models.
+**Code and data in separate folders.** By default the tool and a project's data share the `vr/` folder, and you set nothing. Set
+`VR_DATA` to a folder and `vr.sh` keeps everything of the project there: `pages.json`, `baseline/`, the saved logins (`.auth/`), the run's
+files and `report/`, and an optional `rubric.md` of your own (otherwise the tool's is used). The tool's folder is then only code, and is
+never written to, so it can be fetched, updated or shared by several projects without touching a project's baselines. `VR_DATA` can be
+relative or absolute, and `vr.sh` runs the same from any folder. The tool's `npm install` (Playwright, pixelmatch, pngjs) is done once, in the
+tool's folder.
+
 If Playwright cannot find its Chromium (a corporate machine, or a different Playwright version), set `VR_CHROMIUM` to a Chrome or Chromium binary and `vr.sh` uses that.
 It needs a running site; locally that is `docker compose up -d web`, then `vr/vr.sh http://localhost:5173`.
 
