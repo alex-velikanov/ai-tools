@@ -137,14 +137,25 @@ apply_tree() {
 
 # ---- the visual tool (vr/) is its own project (visual-regressions): fetch the release pinned in VR_VERSION into a temp dir before
 # anything is written, so an unreachable repo or a missing tag stops the run with the project untouched.
-# VR_REPO_URL (a URL or a local path) and VR_VERSION (a tag) override the defaults, for tests and for trying a newer release.
+# The pin is a tag and the full commit it must point at ("v0.1.0 <40 hex>"): the tag is the readable version, the commit is what is
+# trusted, so a tag that was moved upstream is refused instead of installed. VR_REPO_URL (a URL or a local path), VR_VERSION (a tag)
+# and VR_COMMIT override the defaults, for tests and for trying a newer release.
 VR_REPO_URL="${VR_REPO_URL:-https://github.com/alex-velikanov/visual-regressions}"
-VR_TAG="${VR_VERSION:-$(tr -d '[:space:]' < "$HARNESS_DIR/VR_VERSION")}"
+if [ -n "${VR_VERSION:-}" ]; then VR_TAG="$VR_VERSION"; VR_COMMIT="${VR_COMMIT:-}"
+else read -r VR_TAG VR_COMMIT _ < "$HARNESS_DIR/VR_VERSION" || true; fi
 VR_TREE=""; VR_PREVIOUS_TREE=""
+# read_vr_version <file> sets VR_HAD_TAG and VR_HAD_COMMIT; the commit is empty in a marker written before pins carried one.
+read_vr_version() { VR_HAD_TAG=""; VR_HAD_COMMIT=""; if [ -f "$1" ]; then read -r VR_HAD_TAG VR_HAD_COMMIT _ < "$1" || true; fi; }
 archive_vr() {
   git -C "$1" archive HEAD -- . ':(exclude)tests' ':(exclude)test.sh' ':(exclude).github' ':(exclude).gitignore' ':(exclude)CLAUDE.md' | tar -x -C "$2"
 }
 if [ "$WEB" = 1 ]; then
+  if [ -z "$VR_COMMIT" ]; then
+    echo "error: VR_VERSION is set without VR_COMMIT. Pin the tag and the commit it points at, for example:" >&2
+    echo "  VR_VERSION=$VR_TAG VR_COMMIT=\$(git ls-remote $VR_REPO_URL 'refs/tags/$VR_TAG^{}' refs/tags/$VR_TAG | tail -1 | cut -f1) harness-init ..." >&2
+    exit 2
+  fi
+  [[ "$VR_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die "the vr pin needs the full 40-character commit after the tag (got '$VR_COMMIT')"
   VR_TREE="$TMP/vr-tool"
   if ! git clone -q --depth 1 --branch "$VR_TAG" "$VR_REPO_URL" "$TMP/vr-src" 2>"$TMP/vr-clone.log"; then
     echo "error: could not fetch vr $VR_TAG from $VR_REPO_URL (--web needs it). Nothing was written." >&2
@@ -152,32 +163,41 @@ if [ "$WEB" = 1 ]; then
     echo "  Check the network and the tag, or set VR_REPO_URL to a local copy of the repository." >&2
     exit 1
   fi
+  VR_GOT="$(git -C "$TMP/vr-src" rev-parse HEAD)"
+  if [ "$VR_GOT" != "$VR_COMMIT" ]; then
+    echo "error: vr $VR_TAG is at commit $VR_GOT, but this harness pins $VR_COMMIT. The tag was moved upstream, or the pin is wrong." >&2
+    echo "  Refusing to install it. Nothing was written." >&2
+    exit 1
+  fi
   mkdir -p "$VR_TREE"
   archive_vr "$TMP/vr-src" "$VR_TREE"
-  printf '%s\n' "$VR_TAG" > "$VR_TREE/.vr-version"
-  # Resolve previous ownership before writing anything; never infer it from project files.
-  if [ "$UPDATE_VR" = 1 ] && [ -f "$TARGET/vr/.vr-version" ]; then
-    VR_PREVIOUS_TAG="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
-    if [ -n "$VR_PREVIOUS_TAG" ] && [ "$VR_PREVIOUS_TAG" != "$VR_TAG" ]; then
-      if ! git clone -q --depth 1 --branch "$VR_PREVIOUS_TAG" "$VR_REPO_URL" "$TMP/vr-previous-src" 2>"$TMP/vr-previous-clone.log"; then
-        echo "error: could not fetch previous vr $VR_PREVIOUS_TAG from $VR_REPO_URL to identify retired tool files. Nothing was written." >&2
-        exit 1
-      fi
-      VR_PREVIOUS_TREE="$TMP/vr-previous-tool"
-      mkdir -p "$VR_PREVIOUS_TREE"
-      archive_vr "$TMP/vr-previous-src" "$VR_PREVIOUS_TREE"
+  printf '%s %s\n' "$VR_TAG" "$VR_COMMIT" > "$VR_TREE/.vr-version"
+  # Resolve previous ownership before writing anything; never infer it from project files. The previous release is trusted only if its
+  # tag still points at the commit recorded when it was installed (a marker without a commit, from before pins carried one, is taken by tag).
+  read_vr_version "$TARGET/vr/.vr-version"
+  if [ "$UPDATE_VR" = 1 ] && [ -n "$VR_HAD_TAG" ] && [ "$VR_HAD_TAG" != "$VR_TAG" ]; then
+    if ! git clone -q --depth 1 --branch "$VR_HAD_TAG" "$VR_REPO_URL" "$TMP/vr-previous-src" 2>"$TMP/vr-previous-clone.log"; then
+      echo "error: could not fetch previous vr $VR_HAD_TAG from $VR_REPO_URL to identify retired tool files. Nothing was written." >&2
+      exit 1
     fi
+    if [ -n "$VR_HAD_COMMIT" ] && [ "$(git -C "$TMP/vr-previous-src" rev-parse HEAD)" != "$VR_HAD_COMMIT" ]; then
+      echo "error: previous vr $VR_HAD_TAG was installed at commit $VR_HAD_COMMIT but the tag now points elsewhere, so the files it owned cannot be trusted. Nothing was written." >&2
+      exit 1
+    fi
+    VR_PREVIOUS_TREE="$TMP/vr-previous-tool"
+    mkdir -p "$VR_PREVIOUS_TREE"
+    archive_vr "$TMP/vr-previous-src" "$VR_PREVIOUS_TREE"
   fi
 fi
 
 # apply_vr — vr/ gets the release's files. Like everything else a differing file is kept unless --force; --update-vr replaces the
 # tool's own files, removes retired release files, and keeps pages.json and rubric.md, which are the project's.
 apply_vr() {
-  local f rel keep="$FORCE" had=""
-  [ -f "$TARGET/vr/.vr-version" ] && had="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
-  # An installation at another release is left whole: adding the new release's missing files would mix two revisions.
-  if [ -d "$TARGET/vr" ] && [ "$UPDATE_VR" != 1 ] && [ -n "$had" ] && [ "$had" != "$VR_TAG" ]; then
-    log note "vr/ is at $had and this harness pins $VR_TAG: left unchanged, run again with --update-vr to move it"
+  local f rel keep="$FORCE"
+  # An installation at another release (another tag, or the same tag at another commit) is left whole: adding the new release's
+  # missing files would mix two revisions.
+  if [ -d "$TARGET/vr" ] && [ "$UPDATE_VR" != 1 ] && [ -n "$VR_HAD_TAG" ] && { [ "$VR_HAD_TAG" != "$VR_TAG" ] || { [ -n "$VR_HAD_COMMIT" ] && [ "$VR_HAD_COMMIT" != "$VR_COMMIT" ]; }; }; then
+    log note "vr/ is at $VR_HAD_TAG ${VR_HAD_COMMIT:0:7} and this harness pins $VR_TAG ${VR_COMMIT:0:7}: left unchanged, run again with --update-vr to move it"
     return 0
   fi
   # Check the whole unversioned installation before adding any release files or its version marker.
@@ -207,6 +227,8 @@ apply_vr() {
     if [ "$UPDATE_VR" = 1 ]; then
       case "$rel" in pages.json|rubric.md) FORCE=0 ;; *) FORCE=1 ;; esac
     fi
+    # a marker written before pins carried a commit, for this same tag, gains the commit
+    if [ "$rel" = .vr-version ] && [ "$VR_HAD_TAG" = "$VR_TAG" ] && [ -z "$VR_HAD_COMMIT" ]; then FORCE=1; fi
     if [ -x "$f" ]; then put "$f" "vr/$rel" x; else put "$f" "vr/$rel"; fi
   done < <(find "$VR_TREE" -type f | sort)
   FORCE="$keep"

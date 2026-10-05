@@ -320,7 +320,7 @@ the reviewer missed, add it as a new case.
 The visual tool is its own project, [`visual-regressions`](https://github.com/alex-velikanov/visual-regressions); its README documents
 `pages.json` (viewports, `waitFor`, `mask`, logins, interaction states), `--discover`, how the judge is kept honest and how to read the
 report. `harness-init --web` puts the release pinned in `harness/VR_VERSION` into `vr/` (the tool's files, not its tests), and
-`vr/.vr-version` says which one. Edit `vr/pages.json` to your real paths, then:
+`vr/.vr-version` says which one (a tag and the commit it points at; a tag moved upstream is refused). Edit `vr/pages.json` to your real paths, then:
 
 ```bash
 vr/vr.sh --record https://staging.example.com   # before deploy: record the known-good build as the baseline
