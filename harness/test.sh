@@ -159,8 +159,8 @@ check "the release's tests, CI files and git data are not installed" vr_only_the
 check "re-run changes nothing" bash -c "'$HARNESS/bootstrap.sh' '$P' --web | grep -q 'Summary: 0 created, 0 merged'"
 echo '{"pages":["/mine"]}' > "$P/vr/pages.json"; echo "# my rubric" > "$P/vr/rubric.md"; echo "local edit" >> "$P/vr/auth.mjs"
 VR_VERSION="$VRTAG2" boot_vr "$P" --web
-vr_pin_moved_without_flag() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG" ] && [ "$(cat "$P/vr/marker")" = one ] && grep -q "local edit" "$P/vr/auth.mjs"; }
-check "a newer pin alone does not touch vr/: files are kept and the way to update is shown" vr_pin_moved_without_flag
+vr_pin_moved_without_flag() { grep -q "run again with --update-vr" "$WORK/vrboot.log" && [ "$(cat "$P/vr/.vr-version")" = "$VRTAG" ] && [ "$(cat "$P/vr/marker")" = one ] && grep -q "local edit" "$P/vr/auth.mjs" && [ ! -e "$P/vr/added-later.mjs" ]; }
+check "a newer pin alone leaves vr/ whole (nothing replaced, no new files from the newer release) and shows the way to update" vr_pin_moved_without_flag
 VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr
 vr_updated() { [ "$(cat "$P/vr/.vr-version")" = "$VRTAG2" ] && [ "$(cat "$P/vr/marker")" = two ] && [ -f "$P/vr/added-later.mjs" ] && ! grep -q "local edit" "$P/vr/auth.mjs"; }
 check "--update-vr moves vr/ to the new release (changed and new files, a local edit to the tool is replaced)" vr_updated
@@ -171,8 +171,8 @@ VR_VERSION="$VRTAG2" boot_vr "$P" --web --update-vr --force
 check "--update-vr with --force keeps pages.json and rubric.md" vr_project_files_kept
 check "--update-vr with --force replaces tool files" vr_updated
 check "--force still replaces other harness files after vr" bash -c "! grep -q 'local notes' '$P/AGENTS.md'"
-boot_vr "$P" --web --force
-check "--force without --update-vr still replaces project files" bash -c "cmp -s '$VRFIX/pages.json' '$P/vr/pages.json' && cmp -s '$VRFIX/rubric.md' '$P/vr/rubric.md'"
+VR_VERSION="$VRTAG2" boot_vr "$P" --web --force
+check "--force without --update-vr still replaces project files (at the installed release)" bash -c "cmp -s '$VRFIX/pages.json' '$P/vr/pages.json' && cmp -s '$VRFIX/rubric.md' '$P/vr/rubric.md'"
 
 vr_unversioned_kept() {
   local flag="$1" dir

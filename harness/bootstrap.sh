@@ -159,6 +159,11 @@ fi
 apply_vr() {
   local f rel keep="$FORCE" had=""
   [ -f "$TARGET/vr/.vr-version" ] && had="$(tr -d '[:space:]' < "$TARGET/vr/.vr-version")"
+  # An installation at another release is left whole: adding the new release's missing files would mix two revisions.
+  if [ -d "$TARGET/vr" ] && [ "$UPDATE_VR" != 1 ] && [ -n "$had" ] && [ "$had" != "$VR_TAG" ]; then
+    log note "vr/ is at $had and this harness pins $VR_TAG: left unchanged, run again with --update-vr to move it"
+    return 0
+  fi
   # Check the whole unversioned installation before adding any release files or its version marker.
   if [ -d "$TARGET/vr" ] && [ ! -e "$TARGET/vr/.vr-version" ] && [ "$UPDATE_VR" != 1 ]; then
     while IFS= read -r f; do
@@ -179,9 +184,6 @@ apply_vr() {
     if [ -x "$f" ]; then put "$f" "vr/$rel" x; else put "$f" "vr/$rel"; fi
   done < <(find "$VR_TREE" -type f | sort)
   FORCE="$keep"
-  if [ -n "$had" ] && [ "$had" != "$VR_TAG" ] && [ "$UPDATE_VR" != 1 ]; then
-    log note "vr/ is at $had and this harness pins $VR_TAG: run again with --update-vr to move it"
-  fi
 }
 
 # append_gitignore <fragment...> — adds only lines not already present
