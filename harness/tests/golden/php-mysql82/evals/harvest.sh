@@ -11,7 +11,9 @@ git log --format=%H --grep='^fix' -30 | while read -r fix; do
     dir="evals/cases/$(git log -1 --format=%s "$intro" | tr -cs '[:alnum:]' '-' | cut -c1-40)"
     mkdir -p "$dir"
     git show "$intro" -- "$f" > "$dir/diff.patch"
-    git log -1 --format='{"should_find": true, "bug": "fixed by: %s"}' "$fix" \
+    # json.dumps, so a commit subject with quotes or backslashes still gives valid JSON
+    git log -1 --format=%s "$fix" \
+      | python3 -I -c 'import json, sys; print(json.dumps({"should_find": True, "bug": "fixed by: " + sys.stdin.read().strip()}))' \
       > "$dir/expected.json"
   done
 done

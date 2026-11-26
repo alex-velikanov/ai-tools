@@ -189,6 +189,10 @@ Blame heuristics are imperfect — refine this against your repo with an agent, 
 
 **Run and grade in two separate passes:**
 
+*The two scripts and the workflow below are the original design sketch. The ones the harness installs differ: reviews are isolated
+from the expected answers, and the script computes the pass/fail result. See [`harness/README.md`](harness/README.md#evals-testing-the-review-prompt).
+For now we also [run evals locally, not in CI](harness/README.md#how-we-run-evals-locally-decided-2026-11-26).*
+
 ```bash
 #!/usr/bin/env bash
 # evals/run.sh

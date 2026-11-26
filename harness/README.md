@@ -52,6 +52,40 @@ tests/golden/           snapshots of generated files for five flag combinations
 test.sh                 the test suite (below)
 ```
 
+## Evals: testing the review prompt
+`./evals/run.sh` runs every case in `evals/cases/` (`diff.patch` + `expected.json`) through `evals/review-prompt.md`.
+
+- **Blind:** each review runs in an empty folder with tools and customizations off, and gets only the prompt and the diff. The expected
+  answers are never in its input.
+- **Grading:** for a bug case, a second isolated call says whether a finding identifies that bug. A clean case passes if no finding has
+  severity 3 or above. The script, not the model, computes the scores.
+- **Gate:** recall must be at least 0.7, with at most 2 clean cases flagged. A score with no cases of its kind is reported as not measured.
+- **Exit:** `0` passed, `1` below the thresholds, `2` a case or a model reply is unusable (including a failed login). With no cases at all
+  it exits `0` and says that nothing was evaluated (a warning annotation in GitHub Actions).
+
+It needs `python3` and a `claude` CLI recent enough to have `--safe-mode` and `--json-schema`. `MODEL` (default `sonnet`) picks the
+reviewer; `GRADER_MODEL` (default `MODEL`) picks the grader.
+
+### How we run evals: locally (decided 2026-11-26)
+**For now, evals run only on our own machines. Do not set up an API key or a token for them.**
+
+- **Run:** from the project folder, `./evals/run.sh`. Do it after changing `evals/review-prompt.md` or switching models. Nothing runs it
+  for you, including the monthly check for model drift.
+- **Sign-in:** the `claude` command line must be signed in (`claude auth status`; if it is not, `claude auth login`). Signing in to the
+  desktop app or the website may not sign in the command line.
+- **Cost:** with a `claude.ai` subscription sign-in there is no separate API bill, and runs count against the plan's usage limits (check
+  your paid extra usage setting, if you have one). If `ANTHROPIC_API_KEY` is set in your shell, runs may be billed to the API instead.
+- **GitHub workflow:** `harness-init` still creates `.github/workflows/eval.yml`, and we do not give it a secret, so once a project has
+  eval cases its runs are expected to fail. Disable it in the project once it is on GitHub: `gh workflow disable eval.yml`.
+
+If we later want CI runs: `eval.yml` as written installs a pinned `claude` (Dependabot does not update that pin) and reads the
+`ANTHROPIC_API_KEY` repo secret, which is billed as API use. Using a subscription token from `claude setup-token`
+(`CLAUDE_CODE_OAUTH_TOKEN`) instead would need a change to the workflow, and has not been tried here.
+
+**A project set up earlier** keeps its old files, because `harness-init` skips files that differ. Copy `core/files/evals/run.sh`,
+`core/files/evals/harvest.sh` and `core/files/.github/workflows/eval.yml` over by hand: `--force` would also replace every other
+file you have edited.
+
 ## Tests: how regressions are caught
 ```bash
 harness/test.sh                  # fast tier, a minute or two, starts no containers
@@ -61,6 +95,8 @@ harness/test.sh --update-golden  # after an intended template change: regenerate
 
 **Fast tier** (also runs in CI on every push, and as this repo's pre-push hook):
 - `bash -n` on every script.
+- The eval scripts, against a stand-in `claude` (no model, no network): the isolation flags and what the reviewer is given, both
+  thresholds, unusable replies and cases, a project with no cases, and `harvest.sh` writing valid JSON.
 - Golden snapshots: the full generated file tree for five flag combinations (php+web+postgres, php 8.2+mysql, go only, web on Node 20,
   everything with Postgres 18). Any change to what the harness generates shows up as a diff.
 - Every generated `compose.yaml` passes `docker compose config`.
@@ -102,7 +138,7 @@ tier tests all this against a local fixture repository, so it needs no network:
 ## Manual, once per project
 1. Fill in `AGENTS.md` Structure and Rules with real facts; check the Commands.
 2. Set `vr/pages.json` to real paths (web); pages are shot at desktop, tablet and mobile by default.
-3. Push to GitHub; branch protection on `main`; repo secret `ANTHROPIC_API_KEY` for `eval.yml`.
+3. Push to GitHub; branch protection on `main`; `gh workflow disable eval.yml` ([evals run locally](#how-we-run-evals-locally-decided-2026-11-26)).
 4. Sentry: project, rate limits first, then SDK.
 5. After ~2 weeks of real use: `./evals/harvest.sh`, curate ~12 cases (about half clean).
 

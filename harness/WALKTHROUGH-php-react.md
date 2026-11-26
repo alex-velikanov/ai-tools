@@ -87,7 +87,7 @@ Drop the flag to get just the files; the commands are printed so you can run the
 | `e2e/` | Playwright **on the host**, against the containerised app: config, `seed.spec.ts`, `specs/`, and the planner / generator / healer agents in `e2e/.claude/` |
 | `vr/` | visual regression tool (host), fetched from its own repo at the pinned release: `pages.json`, `rubric.md`, `vr.sh`, and the scripts |
 | `.cursor/mcp.json` | `xdebug` (runs inside the `app` container via `docker compose exec -T`) and `playwright` MCP servers |
-| `evals/`, `.github/workflows/eval.yml` | eval harness for the review prompt; runs monthly and when `review-prompt.md` changes |
+| `evals/`, `.github/workflows/eval.yml` | eval harness for the review prompt; we run it locally, so the workflow (monthly and on `review-prompt.md` changes) gets disabled |
 | `.github/dependabot.yml` | composer (`/backend`), npm (`/frontend`), github-actions; 7-day cooldown |
 | `AGENTS.md` + `CLAUDE.md` | project facts for agents; `CLAUDE.md` is a symlink |
 | `.review-log.md`, `.gitignore` | where dismissed review findings go; harness lines appended |
@@ -282,7 +282,7 @@ The harness stops short of this on purpose.
 
 ```bash
 gh repo create shop --private --source=. --push    # or create it in the browser and add the remote
-gh secret set ANTHROPIC_API_KEY                    # for eval.yml; paste the key when prompted
+gh workflow disable eval.yml                       # evals run locally for now; no API key or token needed
 ```
 
 Then in the browser: **Settings → Branches → add rule for `main`**: require a pull request,
@@ -309,9 +309,10 @@ The harvest is rough. Spend the time curating: delete cases that make no sense, 
 MODEL=sonnet ./evals/run.sh     # blind review pass, then a separate grading pass
 ```
 
-It exits non-zero if recall is under 0.7 or there are more than 2 false positives. After that
-the monthly GitHub workflow watches for model drift. Whenever a bug reaches production that
-the reviewer missed, add it as a new case.
+It exits 1 if recall is under 0.7 or more than 2 clean cases are flagged, and 2 if a case or a model reply is unusable (see
+[Evals](README.md#evals-testing-the-review-prompt)). With no cases it passes and says nothing was evaluated.
+[We run evals locally for now](README.md#how-we-run-evals-locally-decided-2026-11-26), so rerun it yourself after changing the
+review prompt or switching models. Whenever a bug reaches production that the reviewer missed, add it as a new case.
 
 ---
 

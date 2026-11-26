@@ -1,5 +1,10 @@
 # Instructions for Claude in this repo
 
+## Evals
+
+Evals run locally with the command-line `claude` sign-in. Do not propose or set up an API key, token or CI secret for them unless asked.
+Details: [`harness/README.md`](harness/README.md#how-we-run-evals-locally-decided-2026-11-26).
+
 ## Git
 
 - **Author:** use your own Git identity unless the repository owner authorizes another identity.
