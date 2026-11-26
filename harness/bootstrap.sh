@@ -391,7 +391,7 @@ cat <<EOF
 Still manual (once per project):
   1. Fill in AGENTS.md "Structure" and "Rules" with real facts; verify the Commands section.
   2. Set vr/pages.json to your real URLs (web).
-  3. Push to GitHub, then: branch protection on main; repo secret ANTHROPIC_API_KEY (for eval.yml).
+  3. Push to GitHub, then: branch protection on main; gh workflow disable eval.yml (evals run locally: ./evals/run.sh).
   4. Sentry: create project, set rate limits BEFORE pointing prod at it, then add the SDK.
   5. After ~2 weeks of real work: ./evals/harvest.sh, curate ~12 cases (about half clean).
 EOF

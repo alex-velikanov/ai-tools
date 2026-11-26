@@ -6,9 +6,16 @@ on:
       - 'evals/review-prompt.md'     # any prompt edit
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.330
       - run: ./evals/run.sh
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

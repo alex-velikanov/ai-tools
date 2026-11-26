@@ -126,6 +126,101 @@ expect_fail "database with no stack" "needs --php or --web"     --go --db postgr
 expect_fail "unknown option"         "unknown option"           --nonsense
 expect_fail "odd database tag"       "odd characters"           --php --db 'postgres:1;rm'
 
+echo; echo "== fast: evals (a stand-in claude: no model, no network) =="
+# The stand-in logs each call (arguments, working folder and its contents, stdin) and replies according to markers in the diff.
+FAKE="$WORK/fake-bin"; mkdir -p "$FAKE"
+cat > "$FAKE/claude" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+prompt, args = sys.stdin.read(), sys.argv[1:]
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps({"args": args, "cwd": os.getcwd(), "files": os.listdir("."), "prompt": prompt}) + "\n")
+mode = os.environ.get("FAKE_MODE", "ok")
+if mode == "garbage": print("I could not do that"); sys.exit(0)
+if mode == "is-error": print(json.dumps({"is_error": True, "result": "Not logged in"})); sys.exit(0)
+if mode == "exit-1": print(json.dumps({"is_error": False, "structured_output": {"findings": []}})); sys.exit(1)
+if mode == "no-output": print(json.dumps({"is_error": False, "result": "prose"})); sys.exit(0)
+if "matched" in args[args.index("--json-schema") + 1]:
+    out = {"matched": "yes" if mode == "bad-grade" else "WRONG_FINDING" not in prompt, "reason": "stub"}
+else:
+    severity = 4 if "HAS_BUG" in prompt else 2 if "NITPICK" in prompt else None
+    word = "WRONG_FINDING" if "OFF_TARGET" in prompt else "stub"
+    out = {"findings": [] if severity is None else [{"file": "a", "line": 1, "bug": word, "trigger": "x", "severity": severity}]}
+    if mode == "bad-severity": out = {"findings": [{"file": "a", "line": 1, "bug": "x", "trigger": "x", "severity": "high"}]}
+print(json.dumps({"is_error": False, "structured_output": out}))
+PY
+chmod +x "$FAKE/claude"
+evproj() { local d="$WORK/ev/$1"; rm -rf "$d"; mkdir -p "$d/evals/cases"; cp "$HARNESS/core/files/evals/run.sh" "$HARNESS/core/files/evals/review-prompt.md" "$d/evals/"; echo "$d"; }
+evcase() {  # evcase <proj> <name> <true|false> <diff marker>
+  local c="$1/evals/cases/$2"; mkdir -p "$c"; echo "+ $4" > "$c/diff.patch"
+  printf '{"should_find": %s, "bug": "SECRET_ANSWER"}\n' "$3" > "$c/expected.json"; }
+evrun() {  # evrun <proj> <expected exit> [VAR=value...]
+  local d="$1" want="$2" rc; shift 2; : > "$WORK/ev.calls"
+  (cd "$d" && env -u GITHUB_ACTIONS -u MODEL -u GRADER_MODEL PATH="$FAKE:$PATH" FAKE_LOG="$WORK/ev.calls" "$@" bash evals/run.sh) >"$WORK/ev.log" 2>&1; rc=$?
+  [ "$rc" -eq "$want" ] || { echo "exit $rc, wanted $want"; cat "$WORK/ev.log"; return 1; }; }
+said() { grep -q -- "$1" "$WORK/ev.log" || { echo "output lacks: $1"; cat "$WORK/ev.log"; return 1; }; }
+calls() { local n; n="$(wc -l < "$WORK/ev.calls" | tr -d ' ')"; [ "$n" -eq "$1" ] || { echo "$n claude calls, wanted $1"; return 1; }; }
+
+ev_none() { local d; d="$(evproj none)"; evrun "$d" 0 && said "nothing was evaluated" && calls 0 \
+  && evrun "$d" 0 GITHUB_ACTIONS=true && said "^::warning::"; }
+check "evals: no cases passes, says nothing was evaluated, calls no model" ev_none
+ev_pass() { local d; d="$(evproj pass)"; evcase "$d" bug true HAS_BUG; evcase "$d" clean false CLEAN; evcase "$d" minor false NITPICK
+  evrun "$d" 0 && said "recall: 1/1" && said "false positives: 0 of 2" && said "^PASSED" && calls 4 && [ -f "$d/evals/cases/bug/actual.json" ]; }
+check "evals: a found bug and quiet clean cases pass (severity 2 is not a false positive)" ev_pass
+ev_blind() { python3 - "$WORK/ev.calls" "$WORK/ev/pass" <<'PY'
+import json, os, sys
+calls = [json.loads(line) for line in open(sys.argv[1])]; project = os.path.realpath(sys.argv[2])
+reviews = [c for c in calls if "matched" not in c["args"][c["args"].index("--json-schema") + 1]]
+assert len(reviews) == 3, len(reviews)
+for c in calls:
+    a = c["args"]
+    assert a[a.index("--tools") + 1] == "" and "--safe-mode" in a and "--strict-mcp-config" in a, a
+    assert c["files"] == [] and not os.path.realpath(c["cwd"]).startswith(project), c["cwd"]
+for c in reviews:
+    assert "SECRET_ANSWER" not in c["prompt"] + " ".join(c["args"]), "the reviewer saw the expected answer"
+PY
+}
+check "evals: every call runs in an empty folder with tools off, and the reviewer never gets the expected answer" ev_blind
+ev_low_recall() { local d; d="$(evproj recall)"; evcase "$d" a true HAS_BUG; evcase "$d" b true MISSED; evcase "$d" c true "HAS_BUG OFF_TARGET"
+  evrun "$d" 1 && said "recall: 1/3" && said "^FAILED"; }
+check "evals: recall below 0.7 exits 1 (a missed bug, and a finding about something else)" ev_low_recall
+ev_recall_edge() { local d i; d="$(evproj edge)"; for i in 1 2 3 4 5 6 7; do evcase "$d" "hit$i" true HAS_BUG; done
+  for i in 1 2 3; do evcase "$d" "miss$i" true MISSED; done; evrun "$d" 0 && said "recall: 7/10"; }
+check "evals: recall of exactly 0.7 passes" ev_recall_edge
+ev_noisy() { local d; d="$(evproj noisy)"; evcase "$d" bug true HAS_BUG; evcase "$d" n1 false HAS_BUG; evcase "$d" n2 false HAS_BUG
+  evrun "$d" 0 && said "false positives: 2 of 2" || return 1; evcase "$d" n3 false HAS_BUG; evrun "$d" 1 && said "false positives: 3 of 3"; }
+check "evals: 2 flagged clean cases pass, 3 exit 1" ev_noisy
+ev_clean_only() { local d; d="$(evproj cleanonly)"; evcase "$d" c false CLEAN; evrun "$d" 0 && said "recall: not measured" && calls 1; }
+check "evals: with only clean cases, recall is reported as not measured" ev_clean_only
+ev_unusable() { local d mode; d="$(evproj unusable)"; evcase "$d" bug true HAS_BUG
+  for mode in garbage is-error exit-1 no-output bad-severity bad-grade; do
+    echo stale > "$d/evals/cases/bug/actual.json"
+    evrun "$d" 2 FAKE_MODE="$mode" && said "no usable result" || { echo "mode $mode"; return 1; }
+    ! grep -q stale "$d/evals/cases/bug/actual.json" 2>/dev/null || { echo "stale actual.json kept ($mode)"; return 1; }
+  done; }
+check "evals: a failed, empty or malformed model reply exits 2 and leaves no stale result" ev_unusable
+ev_stops_early() { local d; d="$(evproj early)"; evcase "$d" a true HAS_BUG; evcase "$d" b true HAS_BUG; evrun "$d" 2 FAKE_MODE=is-error && calls 1; }
+check "evals: when the first call fails, no further calls are made" ev_stops_early
+ev_bad_case() { local d bad; for bad in 'not json' '{}' '{"should_find": "true"}' '{"should_find": true}' 'no-diff' 'empty-diff'; do
+    d="$(evproj badcase)"; evcase "$d" good false CLEAN; evcase "$d" broken true HAS_BUG
+    case "$bad" in no-diff) rm "$d/evals/cases/broken/diff.patch" ;; empty-diff) : > "$d/evals/cases/broken/diff.patch" ;;
+      *) echo "$bad" > "$d/evals/cases/broken/expected.json" ;; esac
+    evrun "$d" 2 && said "unusable cases" && calls 0 || { echo "case: $bad"; return 1; }
+  done; }
+check "evals: a broken case exits 2 before any model call" ev_bad_case
+ev_no_prompt() { local d; d="$(evproj noprompt)"; evcase "$d" a false CLEAN; rm "$d/evals/review-prompt.md"; evrun "$d" 2 && calls 0; }
+check "evals: a missing review prompt exits 2" ev_no_prompt
+ev_harvest() { local d="$WORK/ev/harvest"; rm -rf "$d"; mkdir -p "$d/evals"; cp "$HARNESS/core/files/evals/harvest.sh" "$d/evals/"
+  git -C "$d" init -q -b main; echo one > "$d/f"; gitc "$d" add f; gitc "$d" commit -q -m "feat: add f"
+  echo two > "$d/f"; gitc "$d" commit -q -am 'fix: handle "quoted" C:\path'
+  (cd "$d" && bash evals/harvest.sh) && python3 -c 'import glob, json, sys
+found = [json.load(open(p)) for p in glob.glob(sys.argv[1] + "/evals/cases/*/expected.json")]
+assert found == [{"should_find": True, "bug": "fixed by: fix: handle \"quoted\" C:\\path"}], found' "$d"; }
+check "evals: harvest.sh writes valid JSON for a commit subject with quotes and backslashes" ev_harvest
+ev_workflow() { local f="$HARNESS/core/files/.github/workflows/eval.yml"
+  grep -qE 'npm install -g @anthropic-ai/claude-code@[0-9]+\.[0-9]+\.[0-9]+' "$f" && grep -qF 'ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}' "$f"; }
+check "evals: eval.yml installs a pinned claude and passes the API key secret" ev_workflow
+
 echo; echo "== fast: skills installer =="
 ST="$WORK/skills-target"; mkdir -p "$ST/foreign"
 echo x > "$ST/foreign/SKILL.md"
