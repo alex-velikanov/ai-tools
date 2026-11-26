@@ -7,6 +7,8 @@
 #   2. Grade. A bug case passes if the grader says a finding identifies that bug. A clean case passes
 #      if no finding has severity >= 3 (no model needed).
 #   3. This script, not the model, computes the scores and sets the exit code.
+# Limit: safe mode still applies organization-managed settings and managed plugin hooks, so on a managed
+# machine the review may not be fully blind.
 #
 # Exit: 0 passed (or no cases yet), 1 below the thresholds, 2 a case or a model reply is unusable.
 # MODEL (default sonnet) reviews, GRADER_MODEL (default MODEL) grades.
@@ -86,7 +88,8 @@ def load_case(folder):
         raise Unusable(f"expected.json is not valid JSON: {error}")
     if not isinstance(expected, dict) or not isinstance(expected.get("should_find"), bool):
         raise Unusable('expected.json needs "should_find": true or false')
-    if expected["should_find"] and not str(expected.get("bug") or "").strip():
+    bug = expected.get("bug")
+    if expected["should_find"] and not (isinstance(bug, str) and bug.strip()):
         raise Unusable('expected.json needs a "bug" description when should_find is true')
     return diff, expected
 
@@ -148,6 +151,7 @@ def main():
     bugs = bugs_found = false_positives = 0
     for folder, diff, expected in cases:
         name = os.path.basename(folder)
+        findings = None
         try:
             findings = valid_findings(ask(f"{prompt}\n\nReview this diff:\n{diff}\n", MODEL, REVIEW_SCHEMA))
             with open(os.path.join(folder, "actual.json"), "w", encoding="utf-8") as handle:
@@ -167,8 +171,8 @@ def main():
             errors += 1
             rows.append((name, "bug" if expected["should_find"] else "clean", "no usable result", "ERROR"))
             print(f"error: {name}: {error}", file=sys.stderr)
-            # if the very first call fails (no login, bad model) the rest would too
-            if len(rows) == 1:
+            # if the very first review call fails (no login, bad model) the rest would too
+            if len(rows) == 1 and findings is None:
                 break
 
     print("| case | expected | found | result |\n|---|---|---|---|")

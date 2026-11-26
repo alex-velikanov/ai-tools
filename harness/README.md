@@ -56,7 +56,8 @@ test.sh                 the test suite (below)
 `./evals/run.sh` runs every case in `evals/cases/` (`diff.patch` + `expected.json`) through `evals/review-prompt.md`.
 
 - **Blind:** each review runs in an empty folder with tools and customizations off, and gets only the prompt and the diff. The expected
-  answers are never in its input.
+  answers are never in its input. One limit: safe mode does not turn off organization-managed settings or managed plugin hooks, which
+  could add context. For a strictly blind score, use a machine without them.
 - **Grading:** for a bug case, a second isolated call says whether a finding identifies that bug. A clean case passes if no finding has
   severity 3 or above. The script, not the model, computes the scores.
 - **Gate:** recall must be at least 0.7, with at most 2 clean cases flagged. A score with no cases of its kind is reported as not measured.
@@ -82,7 +83,9 @@ If we later want CI runs: `eval.yml` as written installs a pinned `claude` (Depe
 `ANTHROPIC_API_KEY` repo secret, which is billed as API use. Using a subscription token from `claude setup-token`
 (`CLAUDE_CODE_OAUTH_TOKEN`) instead would need a change to the workflow, and has not been tried here.
 
-**A project set up earlier** keeps its old files, because `harness-init` skips files that differ. Copy `core/files/evals/run.sh`,
+**A project set up earlier** keeps its old files, because `harness-init` skips files that differ. If it is on GitHub with an
+`eval.yml`, first run `gh workflow disable eval.yml`, before you push the new files: the new workflow passes the `ANTHROPIC_API_KEY`
+secret to `claude`, so a project that has one could start billed runs. Then copy `core/files/evals/run.sh`,
 `core/files/evals/harvest.sh` and `core/files/.github/workflows/eval.yml` over by hand: `--force` would also replace every other
 file you have edited.
 
