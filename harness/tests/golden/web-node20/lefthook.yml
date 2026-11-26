@@ -19,4 +19,4 @@ pre-push:
   commands:
     review:
       run: |
-        echo "Reminder: run CodeRabbit (committed only vs main) before pushing."
+        echo "Reminder: CodeRabbit reviews the GitHub PR. If that is unavailable, run: coderabbit review --agent --base main"

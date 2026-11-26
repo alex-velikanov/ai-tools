@@ -240,8 +240,9 @@ dev only, never production.
 
 **Review before pushing (three different reviewers):**
 
-1. Cursor → CodeRabbit sidebar → **committed only**, base `main`. Free tier: 3 reviews/hour.
-   The `pre-push` hook reminds you. Code is sent to CodeRabbit's servers.
+1. CodeRabbit: preferably its review of the GitHub PR; when that isn't available, `coderabbit review --agent --base main`
+   locally. See [how we run it](../skills/dev-flow/DEV-FLOW.md#coderabbit-how-we-run-it). The `pre-push` hook reminds
+   you. Code is sent to CodeRabbit's servers.
 2. Claude Code, fresh session, **a different model from the one that wrote the code**:
    ```
    /review-code
