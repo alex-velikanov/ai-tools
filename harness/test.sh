@@ -201,7 +201,10 @@ ev_unusable() { local d mode; d="$(evproj unusable)"; evcase "$d" bug true HAS_B
 check "evals: a failed, empty or malformed model reply exits 2 and leaves no stale result" ev_unusable
 ev_stops_early() { local d; d="$(evproj early)"; evcase "$d" a true HAS_BUG; evcase "$d" b true HAS_BUG; evrun "$d" 2 FAKE_MODE=is-error && calls 1; }
 check "evals: when the first call fails, no further calls are made" ev_stops_early
-ev_bad_case() { local d bad; for bad in 'not json' '{}' '{"should_find": "true"}' '{"should_find": true}' 'no-diff' 'empty-diff'; do
+ev_grade_fail_goes_on() { local d; d="$(evproj gradefail)"; evcase "$d" a true HAS_BUG; evcase "$d" b true HAS_BUG
+  evrun "$d" 2 FAKE_MODE=bad-grade && calls 4 && [ -f "$d/evals/cases/b/actual.json" ] && said "2 case(s) gave no usable result"; }
+check "evals: a failed grading of the first case still reviews the rest, and the run exits 2" ev_grade_fail_goes_on
+ev_bad_case() { local d bad; for bad in 'not json' '{}' '{"should_find": "true"}' '{"should_find": true}' '{"should_find": true, "bug": 42}' '{"should_find": true, "bug": ["a"]}' '{"should_find": true, "bug": "  "}' 'no-diff' 'empty-diff'; do
     d="$(evproj badcase)"; evcase "$d" good false CLEAN; evcase "$d" broken true HAS_BUG
     case "$bad" in no-diff) rm "$d/evals/cases/broken/diff.patch" ;; empty-diff) : > "$d/evals/cases/broken/diff.patch" ;;
       *) echo "$bad" > "$d/evals/cases/broken/expected.json" ;; esac
