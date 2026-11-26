@@ -2,6 +2,7 @@ This repository contains development tools and practices that I use across diffe
 
 | What | Where |
 |---|---|
+| **Start here:** set up a repo and build a feature, step by step | [`MANUAL.md`](MANUAL.md) |
 | Bootstrap a project with the harness (hooks, secret/code scanning, evals, MCP config, Docker runtime for PHP/Node/DB) | [`harness/`](harness/README.md) — the `harness-init` command |
 | Worked example: a new PHP + React app, step by step | [`harness/WALKTHROUGH-php-react.md`](harness/WALKTHROUGH-php-react.md) |
 | My skills for Claude Code and Cursor (single source, with installer) | [`skills/`](skills/README.md) |
@@ -92,6 +93,9 @@ Rule of thumb: **if you can specify it, delegate it; if you have to watch it, do
 Three layers, three failure modes, three vendors.
 
 ### 4.1 CodeRabbit IDE extension — free
+
+*This is the original design. How we run CodeRabbit now (GitHub PR review preferred, local command-line review when it isn't
+available) is in [`DEV-FLOW.md`](skills/dev-flow/DEV-FLOW.md#coderabbit-how-we-run-it).*
 
 Runs in VS Code, Cursor, Windsurf. **3 reviews/hour, 150 files/review, free on private repos.**
 
